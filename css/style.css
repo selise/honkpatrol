@@ -1,0 +1,25 @@
+/* Reset default margins and padding */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Set sky blue background */
+body {
+    background-color: #87CEEB;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Style and center the game canvas */
+#gameCanvas {
+    border: 2px solid black;
+    display: block;
+    margin: 0 auto;
+    background-color: #87CEEB;
+    /* Add shadow for depth */
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+} 
