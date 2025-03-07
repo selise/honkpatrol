@@ -13,20 +13,22 @@ const assets = {
             car_sprites: { left: [], right: [] },
             bus_sprites: { left: [], right: [] },
             truck_sprites: { left: [], right: [] },
-            emergency_sprites: { left: [], right: [] }
+            emergency_sprites: { left: [], right: [] },
+            fire_sprites: [] // Fire animation frames for vehicle crashes
         }
     }
 };
 
 /**
  * Creates a placeholder for failed image loads
- * @returns {HTMLCanvasElement} Canvas with red rectangle
+ * @returns {HTMLCanvasElement} Canvas with transparent background (no red rectangle)
  */
 function createPlaceholder() {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 50;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'red';
+    // Make the placeholder transparent instead of red
+    ctx.fillStyle = 'rgba(0, 0, 0, 0)';
     ctx.fillRect(0, 0, 50, 50);
     return canvas;
 }
@@ -97,13 +99,27 @@ async function preloadAssets() {
     const loadPromises = [];
 
     // Load sound effects
-    const effects = ['poop', 'powerup', 'explosion', 'splat'];
+    const effects = ['poop', 'powerup', 'explosion', 'splat', 'crash', 'fire'];
     effects.forEach(effect => {
-        const ext = effect === 'explosion' ? 'mp3' : 'wav';
+        const ext = effect === 'explosion' || effect === 'crash' || effect === 'fire' ? 'mp3' : 'wav';
         loadPromises.push(
             loadAudio(`assets/sounds/effects/${effect}.${ext}`)
-                .then(audio => assets.sounds.effects[effect] = audio)
-                .catch(err => console.warn(`Failed to load audio: ${effect}`, err))
+                .then(audio => {
+                    assets.sounds.effects[effect] = audio;
+                    // Set volume for specific effects
+                    if (effect === 'fire') {
+                        audio.volume = 0.4; // Lower volume for ambient effect
+                        audio.loop = true;
+                    }
+                })
+                .catch(err => {
+                    console.warn(`Failed to load audio: ${effect}`, err);
+                    // Use explosion as fallback for crash and fire if they fail to load
+                    if ((effect === 'crash' || effect === 'fire') && assets.sounds.effects.explosion) {
+                        assets.sounds.effects[effect] = assets.sounds.effects.explosion;
+                        console.log(`Using explosion sound as fallback for ${effect}`);
+                    }
+                })
         );
     });
     
@@ -229,6 +245,133 @@ async function preloadAssets() {
                 .catch(err => console.warn(`Failed to load emergency sprite: right_${i}`, err))
         );
     });
+    
+    // Function to create a fallback fire sprite
+    const createFireFallback = () => {
+        console.warn('Creating fallback fire sprite');
+        const placeholder = document.createElement('canvas');
+        placeholder.width = placeholder.height = 80; // Larger size
+        const ctx = placeholder.getContext('2d');
+        
+        // Create a more realistic flame shape
+        // Use a flame-shaped path instead of a circle
+        ctx.save();
+        
+        // Create base gradient (yellow to red)
+        const gradient = ctx.createRadialGradient(40, 40, 5, 40, 40, 35);
+        gradient.addColorStop(0, 'rgba(255, 255, 200, 0.95)'); // Light yellow center
+        gradient.addColorStop(0.4, 'rgba(255, 160, 0, 0.9)');  // Orange middle
+        gradient.addColorStop(0.7, 'rgba(255, 50, 0, 0.8)');   // Red-orange edge
+        gradient.addColorStop(1, 'rgba(200, 0, 0, 0)');        // Fade out to transparent
+        
+        ctx.fillStyle = gradient;
+        
+        // Draw flame shape
+        ctx.beginPath();
+        
+        // Start at bottom center
+        ctx.moveTo(40, 65);
+        
+        // Left side of flame (create curves)
+        ctx.bezierCurveTo(
+            30, 55, // Control point 1
+            20, 40, // Control point 2
+            30, 20  // End point
+        );
+        
+        // Flame tip (top)
+        ctx.bezierCurveTo(
+            35, 10, // Control point 1
+            45, 10, // Control point 2
+            50, 20  // End point
+        );
+        
+        // Right side of flame
+        ctx.bezierCurveTo(
+            60, 40, // Control point 1
+            50, 55, // Control point 2
+            40, 65  // End point (back to start)
+        );
+        
+        ctx.closePath();
+        ctx.fill();
+        
+        // Add inner glow/highlight
+        const innerGradient = ctx.createRadialGradient(40, 35, 2, 40, 35, 15);
+        innerGradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+        innerGradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
+        
+        ctx.fillStyle = innerGradient;
+        ctx.beginPath();
+        ctx.arc(40, 35, 15, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.restore();
+        return placeholder;
+    };
+    
+    // Simplified direct loading of fire sprites from the specific directory
+    const loadFireSprites = async () => {
+        console.log('Loading fire sprites from /assets/visuals/vehicles/fire_sprites');
+        
+        // Clear any existing fire sprites
+        assets.visuals.vehicles.fire_sprites = [];
+        
+        // List of file names to try in the fire_sprites directory
+        const fileNames = ['fire001.png', 'fire002.png', 'fire003.png', 'fire004.png'];
+        let spritesLoaded = 0;
+        
+        // Load each file directly from the fire_sprites directory
+        for (const fileName of fileNames) {
+            try {
+                const img = await loadImage(`assets/visuals/vehicles/fire_sprites/${fileName}`);
+                assets.visuals.vehicles.fire_sprites.push(img);
+                spritesLoaded++;
+                console.log(`Successfully loaded fire sprite: ${fileName}`);
+            } catch (err) {
+                console.warn(`Failed to load fire sprite: ${fileName}`, err);
+            }
+        }
+        
+        // If no sprites were loaded, try directory listing or fall back to placeholders
+        if (spritesLoaded === 0) {
+            console.warn('No fire sprites loaded, checking directory contents...');
+            
+            try {
+                // Try to load any PNG files from the directory
+                const directoryFiles = [
+                    'fire001.png', 'fire002.png', 'fire003.png', 'fire004.png',
+                    'fire005.png', 'fire006.png', 'fire007.png', 'fire008.png'
+                ];
+                
+                for (const file of directoryFiles) {
+                    try {
+                        const img = await loadImage(`assets/visuals/vehicles/fire_sprites/${file}`);
+                        assets.visuals.vehicles.fire_sprites.push(img);
+                        spritesLoaded++;
+                        console.log(`Successfully loaded fire sprite: ${file}`);
+                    } catch (err) {
+                        // Silently fail for these attempts
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to check directory contents', err);
+            }
+        }
+        
+        // If still no sprites, create fallbacks
+        if (spritesLoaded === 0) {
+            console.warn('No fire sprites could be loaded, using fallbacks');
+            for (let i = 0; i < 4; i++) {
+                assets.visuals.vehicles.fire_sprites.push(createFireFallback());
+            }
+        }
+        
+        console.log(`Total fire sprites loaded: ${assets.visuals.vehicles.fire_sprites.length}`);
+    };
+    
+    // Add the fire sprite loading promise
+    loadPromises.push(loadFireSprites());
     
     try {
         await Promise.all(loadPromises);

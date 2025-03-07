@@ -169,7 +169,13 @@ class Bird {
             width: this.poopSize,
             height: this.poopSize,
             speed: 300, // pixels per second
-            splashRadius: this.splashRadius
+            splashRadius: this.splashRadius,
+            draw: function(ctx) {
+                ctx.fillStyle = '#8B4513'; // Brown color for poop
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
         };
         
         // Start cooldown

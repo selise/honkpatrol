@@ -14,6 +14,10 @@ class Game {
         this.vehicles = [];
         this.foods = [];
         this.droppings = [];
+        this.effects = []; // For visual effects like fires
+        
+        // Test the fire sprites at game start
+        this.testFireEffect();
         
         // Scoring and progression
         this.score = 0;
@@ -32,9 +36,6 @@ class Game {
         this.foodSpawnTimer = 0;
         this.foodSpawnInterval = 10; // Seconds between food spawns
         this.maxFoods = 3; // Maximum number of food items allowed
-        
-        // Visual effects
-        this.effects = []; // Array to store temporary visual effects
     }
 
     /**
@@ -88,12 +89,17 @@ class Game {
 
         // Update vehicles
         this.vehicles = this.vehicles.filter(vehicle => {
-            return vehicle.update(deltaTime);
+            return vehicle.update(deltaTime, this.vehicles);
         });
         
         // Update food items
         this.foods = this.foods.filter(food => {
             return food.update(deltaTime);
+        });
+        
+        // Update effects (like fire animations)
+        this.effects = this.effects.filter(effect => {
+            return effect.update(deltaTime);
         });
         
         // Check for bird collision with food
@@ -189,7 +195,25 @@ class Game {
             y: y,
             radius: wasHonking ? 30 : 20,
             color: wasHonking ? '#FFD700' : '#8B4513', // Gold for honking, brown for not
-            lifetime: 0.5 // seconds
+            lifetime: 0.5, // seconds
+            timer: 0,
+            update: function(deltaTime) {
+                this.timer += deltaTime;
+                return this.timer < this.lifetime;
+            },
+            draw: function(ctx) {
+                // Calculate opacity based on remaining lifetime
+                const opacity = Math.max(0, 1 - (this.timer / this.lifetime));
+                
+                // Draw expanding circle
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * (1 + this.timer / this.lifetime), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
         });
     }
 
@@ -210,48 +234,104 @@ class Game {
     }
 
     /**
-     * Draws the game state
+     * Draws the game state to the canvas
      */
     draw() {
         // Clear canvas
-        this.ctx.fillStyle = '#87CEEB'; // Sky blue
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Draw food items
-        this.foods.forEach(food => food.draw(this.ctx));
-
-        // Draw vehicles
-        this.vehicles.forEach(vehicle => vehicle.draw(this.ctx));
+        // Draw background (sky)
+        this.ctx.fillStyle = '#87CEEB';
+        this.ctx.fillRect(0, 0, this.canvas.width, 100);
         
-        // Draw droppings
-        this.droppings.forEach(dropping => {
-            this.ctx.fillStyle = '#8B4513'; // Brown color
-            this.ctx.beginPath();
-            this.ctx.arc(dropping.x, dropping.y, dropping.width / 2, 0, Math.PI * 2);
-            this.ctx.fill();
+        // Draw road lanes
+        if (this.vehicles.length > 0) {
+            const vehicle = this.vehicles[0]; // Use first vehicle to get lane info
+            const totalLanes = vehicle.totalLanes;
+            const laneHeight = vehicle.laneHeight;
+            const laneStartY = vehicle.laneStartY;
             
-            // Draw splash radius if applicable
-            if (dropping.splashRadius > 0) {
-                this.ctx.strokeStyle = 'rgba(139, 69, 19, 0.3)'; // Transparent brown
+            // Draw lane background
+            // Emergency lane (top)
+            this.ctx.fillStyle = 'rgba(255, 200, 200, 0.5)'; // Light red for emergency lane
+            this.ctx.fillRect(0, laneStartY, this.canvas.width, laneHeight);
+            
+            // Normal lanes (central 3 lanes)
+            this.ctx.fillStyle = 'rgba(100, 100, 100, 0.5)'; // Gray for normal lanes
+            this.ctx.fillRect(0, laneStartY + laneHeight, this.canvas.width, laneHeight * 3);
+            
+            // Bottom regular lane (restricted)
+            this.ctx.fillStyle = 'rgba(255, 255, 150, 0.5)'; // Light yellow for restricted lane
+            this.ctx.fillRect(0, laneStartY + laneHeight * 4, this.canvas.width, laneHeight);
+            
+            // Emergency lane (bottom)
+            this.ctx.fillStyle = 'rgba(255, 200, 200, 0.5)'; // Light red for emergency lane
+            this.ctx.fillRect(0, laneStartY + laneHeight * 5, this.canvas.width, laneHeight);
+            
+            // Draw lane markers
+            this.ctx.strokeStyle = '#FFFFFF';
+            this.ctx.lineWidth = 2;
+            
+            for (let i = 0; i <= totalLanes; i++) {
+                const y = laneStartY + i * laneHeight;
+                
+                // Draw dashed lines for lane markers
                 this.ctx.beginPath();
-                this.ctx.arc(dropping.x, dropping.y, dropping.splashRadius, 0, Math.PI * 2);
+                this.ctx.setLineDash([20, 10]);
+                this.ctx.moveTo(0, y);
+                this.ctx.lineTo(this.canvas.width, y);
                 this.ctx.stroke();
             }
-        });
+            
+            // Draw emergency lane markings
+            this.ctx.strokeStyle = '#FF0000'; // Red for emergency markings
+            this.ctx.lineWidth = 1;
+            
+            // Emergency text for top lane
+            this.ctx.font = '20px Arial';
+            this.ctx.fillStyle = '#FF0000';
+            this.ctx.fillText('EMERGENCY LANE', 20, laneStartY + laneHeight / 2 + 7);
+            
+            // Restricted lane text
+            this.ctx.fillStyle = '#AA7700';
+            this.ctx.fillText('RESTRICTED', 20, laneStartY + laneHeight * 4 + laneHeight / 2 + 7);
+            
+            // Emergency text for bottom lane
+            this.ctx.fillStyle = '#FF0000';
+            this.ctx.fillText('EMERGENCY LANE', 20, laneStartY + laneHeight * 5 + laneHeight / 2 + 7);
+            
+            // Reset line dash
+            this.ctx.setLineDash([]);
+        }
         
-        // Draw visual effects
-        this.effects.forEach(effect => {
-            const alpha = effect.lifetime / 0.5; // Fade out over lifetime
-            this.ctx.fillStyle = effect.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
-            this.ctx.beginPath();
-            this.ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
-            this.ctx.fill();
-        });
-
-        // Draw bird
+        // Draw ground
+        this.ctx.fillStyle = '#8B4513';
+        this.ctx.fillRect(0, this.canvas.height - 50, this.canvas.width, 50);
+        
+        // Draw food items
+        for (const food of this.foods) {
+            food.draw(this.ctx);
+        }
+        
+        // Draw vehicles
+        for (const vehicle of this.vehicles) {
+            vehicle.draw(this.ctx);
+        }
+        
+        // Draw droppings
+        for (const dropping of this.droppings) {
+            dropping.draw(this.ctx);
+        }
+        
+        // Draw effects (like fire animations)
+        for (const effect of this.effects) {
+            effect.draw(this.ctx);
+        }
+        
+        // Draw bird on top
         this.bird.draw(this.ctx);
-
-        // Draw HUD (score, wave info)
+        
+        // Draw HUD
         this.drawHUD();
     }
     
@@ -350,6 +430,64 @@ class Game {
             birdPosition: this.bird.getPosition(),
             powerUpLevel: this.bird.getPowerUpState().powerUpLevel
         };
+    }
+
+    /**
+     * Tests the fire animation by creating a crash
+     * This is for development purposes to verify fire sprites are loading correctly
+     */
+    testFireAnimation() {
+        console.log('Testing fire animation with sprites from /assets/visuals/vehicles/fire_sprites');
+        
+        // Create two vehicles in the same lane moving toward each other
+        const vehicle1 = this.spawnVehicle();
+        vehicle1.x = this.canvas.width / 3;
+        vehicle1.direction = 'right';
+        vehicle1.lane = 2;
+        vehicle1.y = vehicle1.laneStartY + (vehicle1.lane * vehicle1.laneHeight) + (vehicle1.laneHeight / 2);
+        
+        const vehicle2 = this.spawnVehicle();
+        vehicle2.x = this.canvas.width * 2 / 3;
+        vehicle2.direction = 'left';
+        vehicle2.lane = 2;
+        vehicle2.y = vehicle2.laneStartY + (vehicle2.lane * vehicle2.laneHeight) + (vehicle2.laneHeight / 2);
+        
+        // Force a crash
+        vehicle1.crash();
+        vehicle2.crash();
+        
+        console.log('Created test crash with fire animation');
+    }
+
+    /**
+     * Creates a test fire effect to verify fire sprites are loading correctly
+     */
+    testFireEffect() {
+        console.log('Testing fire effect with sprites from /assets/visuals/vehicles/fire_sprites');
+        
+        // Log fire sprites info
+        const fireSprites = assets.visuals.vehicles.fire_sprites;
+        console.log(`Game initialized with ${fireSprites ? fireSprites.length : 0} fire sprites`);
+        
+        // Create a test fire that will display for a few seconds
+        const testFire = new Fire(
+            this.canvas.width / 2, 
+            this.canvas.height / 2, 
+            100,  // width 
+            120,  // height
+            3     // duration (seconds)
+        );
+        
+        // Add to effects array with both update and draw methods
+        this.effects.push({
+            fire: testFire,
+            update: function(deltaTime) {
+                return this.fire.update(deltaTime);
+            },
+            draw: function(ctx) {
+                this.fire.draw(ctx);
+            }
+        });
     }
 }
 

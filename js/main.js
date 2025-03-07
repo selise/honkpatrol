@@ -138,11 +138,43 @@ function gameLoop(timestamp) {
 
 /**
  * Initializes game
+ * @returns {Promise<void>}
  */
 async function initGame() {
     try {
+        // Initialize canvas
         initializeCanvas();
+        
+        // Apply pixel scaling for retro look
+        ctx.imageSmoothingEnabled = false;
+        
+        // Load assets first
         await preloadAssets();
+        
+        // Debug fire sprites
+        const fireSprites = assets.visuals.vehicles.fire_sprites;
+        console.log(`Game initialized with ${fireSprites ? fireSprites.length : 0} fire sprites loaded`);
+        if (fireSprites && fireSprites.length > 0) {
+            console.log('Fire sprites loaded from /assets/visuals/vehicles/fire_sprites:', fireSprites);
+        } else {
+            console.warn('No fire sprites were loaded from /assets/visuals/vehicles/fire_sprites');
+        }
+        
+        // Create splash screen
+        ctx.fillStyle = '#87CEEB'; // Sky blue
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw title
+        ctx.fillStyle = 'white';
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 2;
+        ctx.font = 'bold 48px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const title = 'HONK PATROL';
+        ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 50);
+        ctx.strokeText(title, canvas.width / 2, canvas.height / 2 - 50);
         
         // Create game instance
         game = new Game(canvas);
@@ -152,16 +184,10 @@ async function initGame() {
         window.addEventListener('keyup', handleKeyUp);
         
         // Draw initial instructions
-        ctx.fillStyle = '#87CEEB'; // Sky blue background
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
         ctx.fillStyle = '#000';
         ctx.font = 'bold 36px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('HONK PATROL', canvas.width / 2, canvas.height / 2 - 60);
-        
-        ctx.font = '18px Arial';
         ctx.fillText('Use arrow keys to move the bird', canvas.width / 2, canvas.height / 2);
         ctx.fillText('Press SPACE to drop on honking vehicles', canvas.width / 2, canvas.height / 2 + 30);
         ctx.fillText('Collect food to power up your droppings', canvas.width / 2, canvas.height / 2 + 60);
@@ -174,9 +200,46 @@ async function initGame() {
         const startGame = (e) => {
             window.removeEventListener('keydown', startGame);
             
-            // Start game loop
-            lastTimestamp = performance.now();
-            gameLoop(lastTimestamp);
+            // Test fire sprites loading and crash animation
+            setTimeout(() => {
+                // Only run the test in development environments
+                if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+                    console.log('Testing fire animation with sprites from /assets/visuals/vehicles/fire_sprites');
+                    
+                    // Create a test fire at center screen
+                    const testFire = new Fire(
+                        canvas.width / 2, 
+                        canvas.height / 2, 
+                        100, 
+                        120, 
+                        5
+                    );
+                    
+                    // Add the fire to the game effects for rendering
+                    if (game.effects) {
+                        game.effects.push({
+                            update: (deltaTime) => testFire.update(deltaTime),
+                            draw: (ctx) => testFire.draw(ctx)
+                        });
+                    } else {
+                        // If no effects array, just run a standalone test
+                        let elapsed = 0;
+                        const testInterval = setInterval(() => {
+                            elapsed += 0.016; // ~60fps
+                            if (elapsed < 5 && testFire.update(0.016)) {
+                                // Keep updating
+                            } else {
+                                clearInterval(testInterval);
+                            }
+                        }, 16);
+                    }
+                }
+            }, 2000); // Wait 2 seconds after game start
+            
+            // Start the game loop
+            lastTimestamp = 0;
+            gamePaused = false;
+            requestAnimationFrame(gameLoop);
             
             // Play start sound
             if (assets && assets.sounds && assets.sounds.ui && assets.sounds.ui.start) {
@@ -193,6 +256,47 @@ async function initGame() {
     } catch (error) {
         console.error('Game initialization failed:', error);
     }
+}
+
+/**
+ * Tests the Fire class with sprites from /assets/visuals/vehicles/fire_sprites
+ */
+function testFireEffect() {
+    // Create a test fire at the center of the screen
+    const testFire = new Fire(
+        canvas.width / 2,   // x
+        canvas.height / 2,  // y
+        100,                // width
+        120,                // height
+        5                   // duration
+    );
+    
+    console.log('Test fire created to verify /assets/visuals/vehicles/fire_sprites usage');
+    
+    // Draw the fire for 5 seconds
+    let startTime = Date.now();
+    
+    function drawTestFire() {
+        // Clear a portion of the canvas
+        ctx.clearRect(
+            canvas.width / 2 - 100, 
+            canvas.height / 2 - 100, 
+            200, 
+            200
+        );
+        
+        // Update and draw the fire
+        const elapsed = (Date.now() - startTime) / 1000;
+        if (elapsed < 5 && testFire.update(0.016)) { // 60fps = ~16ms
+            testFire.draw(ctx);
+            requestAnimationFrame(drawTestFire);
+        } else {
+            console.log('Fire test complete');
+        }
+    }
+    
+    // Start the animation
+    drawTestFire();
 }
 
 // Start the game when the page loads
