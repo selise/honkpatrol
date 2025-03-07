@@ -8,6 +8,7 @@ const assets = {
     visuals: {
         bird_flying: [],
         droppings: null, // Will be created programmatically
+        drops: {}, // New collection for drop assets
         food: {}, // Will store food item sprites
         vehicles: {
             car_sprites: { left: [], right: [] },
@@ -101,7 +102,7 @@ async function preloadAssets() {
     // Load sound effects
     const effects = ['poop', 'powerup', 'explosion', 'splat', 'crash', 'fire'];
     effects.forEach(effect => {
-        const ext = effect === 'explosion' || effect === 'crash' || effect === 'fire' ? 'mp3' : 'wav';
+        const ext = effect === 'explosion' || effect === 'crash' ? 'mp3' : 'wav';
         loadPromises.push(
             loadAudio(`assets/sounds/effects/${effect}.${ext}`)
                 .then(audio => {
@@ -123,7 +124,16 @@ async function preloadAssets() {
         );
     });
     
-    // Create dropping sprite programmatically since it doesn't exist
+    // Load drop sprites (poop and pile)
+    ['poop', 'pile'].forEach(drop => {
+        loadPromises.push(
+            loadImage(`assets/visuals/drops/${drop}.png`)
+                .then(img => assets.visuals.drops[drop] = img)
+                .catch(err => console.warn(`Failed to load drop sprite: ${drop}`, err))
+        );
+    });
+    
+    // Create dropping sprite programmatically as a fallback
     assets.visuals.droppings = createDroppingSprite();
     
     // Load food sprites
@@ -148,12 +158,13 @@ async function preloadAssets() {
         );
     });
 
-    // Load vehicle sounds
-    ['old', 'sports', 'bus', 'truck', 'car'].forEach(vehicle => {
+    // Load vehicle sounds (using honk1-5 instead of vehicle-specific honks)
+    const honkSounds = [1, 2, 3, 4, 5];
+    honkSounds.forEach(num => {
         loadPromises.push(
-            loadAudio(`assets/sounds/vehicles/honk_${vehicle}.wav`)
-                .then(audio => assets.sounds.vehicles[vehicle] = audio)
-                .catch(err => console.warn(`Failed to load vehicle sound: ${vehicle}`, err))
+            loadAudio(`assets/sounds/vehicles/honk${num}.wav`)
+                .then(audio => assets.sounds.vehicles[`honk${num}`] = audio)
+                .catch(err => console.warn(`Failed to load vehicle sound: honk${num}`, err))
         );
     });
 

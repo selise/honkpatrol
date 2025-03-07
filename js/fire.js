@@ -78,18 +78,18 @@ class Fire {
                 // Silently fail if play() throws an error
                 console.debug('Fire sound play failed:', err);
             }
-        } else if (assets.sounds && assets.sounds.effects && assets.sounds.effects.crash) {
-            // Fall back to crash sound if fire sound isn't available
-            const crashSound = assets.sounds.effects.crash;
-            crashSound.currentTime = 0;
+        } else if (assets.sounds && assets.sounds.effects && assets.sounds.effects.explosion) {
+            // Fall back to explosion sound if fire sound isn't available
+            const explosionSound = assets.sounds.effects.explosion;
+            explosionSound.currentTime = 0;
             try {
-                crashSound.play().catch(err => {
+                explosionSound.play().catch(err => {
                     // Silently fail if autoplay is blocked
-                    console.debug('Crash sound autoplay blocked:', err);
+                    console.debug('Explosion sound autoplay blocked:', err);
                 });
             } catch (err) {
                 // Silently fail if play() throws an error
-                console.debug('Crash sound play failed:', err);
+                console.debug('Explosion sound play failed:', err);
             }
         }
     }

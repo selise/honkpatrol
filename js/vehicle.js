@@ -3,6 +3,10 @@
  * @class
  */
 class Vehicle {
+    // Static property to track active honk sounds
+    static activeHonkSounds = 0;
+    static MAX_CONCURRENT_HONKS = 5;
+    
     /**
      * Creates a new Vehicle instance
      * @param {number} canvasWidth - Width of the game canvas
@@ -26,13 +30,13 @@ class Vehicle {
             Math.floor(Math.random() * spriteArray.length) : 0;
         
         // Set size based on type
-        this.width = this.type === 'car' ? 80 : this.type === 'truck' ? 100 : 120;
-        this.height = 50;
+        this.width = this.type === 'car' ? 40 : this.type === 'truck' ? 50 : 60;
+        this.height = 25;
         
         // Define lanes
         this.totalLanes = 6; // Total number of lanes on the road (including emergency lanes)
-        this.laneHeight = 60; // Height of each lane
-        this.laneStartY = 100; // Starting Y position of first lane
+        this.laneHeight = 30; // Reduced from 60 to 30
+        this.laneStartY = this.canvasHeight - (this.totalLanes * this.laneHeight) - 50; // Start from bottom, leaving 50px for ground
         
         // Assign a lane from the central 3 lanes (lanes 2-4, index 1-3)
         // Keeping lanes 0 and 5 as emergency lanes and not using lane 4 (bottom regular lane)
@@ -64,25 +68,38 @@ class Vehicle {
         // Collision and crash state
         this.hasCrashed = false;
         this.crashTimer = 0;
-        this.crashDuration = 5; // 5 seconds until removal after crash
-        this.fire = null; // Will hold a Fire instance when crashed
+        this.crashDuration = 3.0; // seconds
+        this.fire = null;
+        
+        // Poop hit state
+        this.hitByPoop = false;
+        this.hitTimer = 0;
+        this.hitDuration = 3.0; // seconds before disappearing after being hit
         
         // Collision avoidance
-        this.isChangingLane = false;
+        this.targetLane = null;
         this.laneChangeProgress = 0;
-        this.targetLane = this.lane;
-        this.laneChangeSpeed = 1.5; // Time in seconds to complete a lane change
+        this.laneChangeSpeed = 1.0; // Time to complete lane change in seconds
+        
+        // Honking properties
+        this.isHonking = Math.random() < 0.3; // 30% chance to be honking
+        this.honkInterval = 1.0; // seconds between honk sounds while honking
+        this.lastHonkTime = 0; // track last honk time
+        this.honkAnimationTimer = 0; // timer for honk animation
+        this.currentlyPlayingHonk = null; // reference to active audio
+        this.honkGracePeriod = 10.0; // seconds to consider vehicle as honking after last honk
+        
+        // Calculate initial position
         this.originalY = this.y;
         this.targetY = this.y;
         
-        // Set honking behavior (increased to 30% chance of honking)
-        this.isHonking = Math.random() < 0.3;
-        this.honkInterval = Math.random() * 3000 + 2000; // 2 to 5 seconds
-        this.lastHonkTime = 0;
-        this.currentlyPlayingHonk = null;
+        // Sound waves for honking animation
+        this.soundWaves = [];
         
-        // Honking animation
-        this.honkAnimationTimer = 0;
+        // Honking properties
+        this.honkDuration = Math.random() * 2 + 1; // Random duration between 1-3 seconds
+        this.honkTimer = 0;
+        this.honkCooldown = 0;
     }
     
     /**
@@ -92,6 +109,14 @@ class Vehicle {
      * @returns {boolean} True if the vehicle is still on screen, false if it should be removed
      */
     update(deltaTime, allVehicles) {
+        // If vehicle has been hit by poop, update hit timer
+        if (this.hitByPoop) {
+            this.hitTimer += deltaTime;
+            if (this.hitTimer >= this.hitDuration) {
+                return false; // Remove vehicle after 3 seconds
+            }
+        }
+        
         // If vehicle has crashed, update fire and crash timer
         if (this.hasCrashed) {
             // Update fire animation
@@ -171,17 +196,24 @@ class Vehicle {
         
         // Handle honking
         if (this.isHonking) {
-            const currentTime = Date.now();
-            if (currentTime - this.lastHonkTime > this.honkInterval) {
-                this.playHonkSound();
-                this.lastHonkTime = currentTime;
-                this.honkAnimationTimer = 0.5; // 0.5 seconds of animation
+            // Update honk timer
+            this.honkTimer += deltaTime;
+            
+            // Stop honking after the set duration
+            if (this.honkTimer >= this.honkDuration) {
+                this.stopHonkSound();
+                this.honkTimer = 0;
+                // Set a cooldown before honking again (3-7 seconds)
+                this.honkCooldown = Math.random() * 4 + 3;
             }
             
             // Update honk animation
             if (this.honkAnimationTimer > 0) {
                 this.honkAnimationTimer = Math.max(0, this.honkAnimationTimer - deltaTime);
             }
+        } else if (this.honkCooldown > 0) {
+            // Update honk cooldown
+            this.honkCooldown -= deltaTime;
         }
         
         return true; // Vehicle is still active
@@ -263,6 +295,12 @@ class Vehicle {
         const randomSlowdownPercentage = (Math.random() * 25 + 5) / 100; // 0.05 to 0.30
         // Set target speed to the random percentage of original speed (keeping the sign)
         this.targetSpeed = this.originalSpeed * randomSlowdownPercentage;
+        
+        // 50% chance to honk when slowing down
+        if (Math.random() < 0.5 && !this.isHonking && !this.hitByPoop && !this.hasCrashed && this.honkCooldown <= 0) {
+            this.playHonkSound();
+            this.honkTimer = 0; // Reset honk timer
+        }
     }
     
     /**
@@ -490,60 +528,125 @@ class Vehicle {
     }
     
     /**
-     * Plays the appropriate honk sound for this vehicle type
+     * Plays a honking sound based on the vehicle type
      */
     playHonkSound() {
-        if (assets && assets.sounds && assets.sounds.vehicles) {
-            // Map vehicle type to possible sound types
-            const possibleSounds = this.type === 'emergency' ? ['truck'] : 
-                                 this.type === 'bus' ? ['bus'] : 
-                                 this.type === 'truck' ? ['truck'] : 
-                                 ['car', 'old', 'sports']; // For regular cars, randomly choose from different honk sounds
-                                 
-            // Randomly select a sound type from the possible options
-            const soundType = possibleSounds[Math.floor(Math.random() * possibleSounds.length)];
-            const honkSound = assets.sounds.vehicles[`honk_${soundType}`];
+        // If already honking, don't start a new sound
+        if (this.isHonking && this.honkingAudio) {
+            return;
+        }
+        
+        // Check if we've reached the maximum number of concurrent honk sounds
+        if (Vehicle.activeHonkSounds >= Vehicle.MAX_CONCURRENT_HONKS) {
+            // Just set the visual honking state but don't play sound
+            this.isHonking = true;
+            this.lastHonkTime = Date.now() / 1000; // Update last honk time
             
-            if (honkSound) {
-                // Stop any currently playing honk
-                if (this.currentlyPlayingHonk) {
-                    this.currentlyPlayingHonk.pause();
-                    this.currentlyPlayingHonk.currentTime = 0;
-                }
-                
-                // Play new honk with error handling for autoplay restriction
-                honkSound.currentTime = 0;
-                try {
-                    honkSound.play().catch(err => {
-                        // Silently fail if autoplay is blocked
-                        console.debug('Honk sound autoplay blocked:', err);
-                    });
-                    this.currentlyPlayingHonk = honkSound;
-                } catch (err) {
-                    // Silently fail if play() throws an error
-                    console.debug('Honk sound play failed:', err);
+            // Start the sound wave animation
+            this.soundWaves = [{
+                radius: 5,
+                opacity: 1
+            }];
+            return;
+        }
+        
+        // Get all available honk sounds
+        const availableHonks = [];
+        if (assets && assets.sounds && assets.sounds.vehicles) {
+            // Collect all available honk sounds
+            for (const key in assets.sounds.vehicles) {
+                if (key.startsWith('honk')) {
+                    availableHonks.push(assets.sounds.vehicles[key]);
                 }
             }
         }
+        
+        // If we have honk sounds, randomly select one
+        if (availableHonks.length > 0) {
+            // Select a random honk sound
+            const randomIndex = Math.floor(Math.random() * availableHonks.length);
+            const honkSound = availableHonks[randomIndex];
+            
+            // Reset and play the sound
+            honkSound.currentTime = 0;
+            
+            try {
+                // Start the honking
+                this.honkingAudio = honkSound;
+                this.isHonking = true;
+                this.lastHonkTime = Date.now() / 1000; // Update last honk time
+                
+                // Increment active honk counter
+                Vehicle.activeHonkSounds++;
+                
+                // Add ended event listener to decrement counter when sound finishes
+                const decrementCounter = () => {
+                    Vehicle.activeHonkSounds = Math.max(0, Vehicle.activeHonkSounds - 1);
+                    honkSound.removeEventListener('ended', decrementCounter);
+                };
+                honkSound.addEventListener('ended', decrementCounter);
+                
+                // Play the sound
+                const playPromise = honkSound.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.warn('Audio play was prevented:', error);
+                        // Decrement counter if play fails
+                        Vehicle.activeHonkSounds = Math.max(0, Vehicle.activeHonkSounds - 1);
+                        // Visually show honking even if sound doesn't play
+                        this.isHonking = true;
+                    });
+                }
+            } catch (e) {
+                console.warn('Error playing honk sound:', e);
+                // Decrement counter if play throws error
+                Vehicle.activeHonkSounds = Math.max(0, Vehicle.activeHonkSounds - 1);
+                // Visually show honking even if sound doesn't play
+                this.isHonking = true;
+            }
+        } else {
+            // No sounds available, just set honking flag
+            this.isHonking = true;
+            this.lastHonkTime = Date.now() / 1000; // Update last honk time
+        }
+        
+        // Start the sound wave animation
+        this.soundWaves = [{
+            radius: 5,
+            opacity: 1
+        }];
     }
     
     /**
      * Stops any currently playing honk sound
      */
     stopHonkSound() {
-        if (this.currentlyPlayingHonk) {
-            this.currentlyPlayingHonk.pause();
-            this.currentlyPlayingHonk.currentTime = 0;
-            this.currentlyPlayingHonk = null;
+        // Stop audio playback
+        if (this.honkingAudio) {
+            try {
+                this.honkingAudio.pause();
+                this.honkingAudio.currentTime = 0;
+                
+                // Decrement active honk counter
+                Vehicle.activeHonkSounds = Math.max(0, Vehicle.activeHonkSounds - 1);
+                
+                this.honkingAudio = null;
+            } catch (e) {
+                console.warn('Error stopping honk sound:', e);
+            }
         }
+        
+        // Clear visual honking state
+        this.isHonking = false;
     }
     
     /**
-     * Checks if the vehicle is currently honking
-     * @returns {boolean} True if honking, false otherwise
+     * Checks if the vehicle is currently honking or was honking recently
+     * @returns {boolean} True if honking or was honking within grace period
      */
     isCurrentlyHonking() {
-        return this.isHonking;
+        const currentTime = Date.now() / 1000; // Convert to seconds
+        return this.isHonking || (currentTime - this.lastHonkTime < this.honkGracePeriod);
     }
     
     /**
@@ -640,6 +743,27 @@ class Vehicle {
             this.fire.draw(ctx);
         }
         
+        // Draw sound waves if honking (and not hit by poop)
+        if (this.isHonking && !this.hitByPoop && this.soundWaves.length > 0) {
+            this.drawSoundWaves(ctx);
+        }
+        
+        // Draw pile sprite if hit by poop
+        if (this.hitByPoop && assets.visuals.drops && assets.visuals.drops.pile) {
+            // Draw pile on top of the vehicle
+            const pileImg = assets.visuals.drops.pile;
+            const pileWidth = this.width * 0.7;
+            const pileHeight = pileWidth * (pileImg.height / pileImg.width);
+            
+            ctx.drawImage(
+                pileImg,
+                this.x - pileWidth / 2,
+                this.y - this.height / 2 - pileHeight / 2,
+                pileWidth,
+                pileHeight
+            );
+        }
+        
         ctx.restore();
     }
     
@@ -661,9 +785,6 @@ class Vehicle {
                     // When honking, make the vehicle "bounce" a little
                     const bounceY = Math.sin(this.honkAnimationTimer * Math.PI * 10) * 2;
                     ctx.drawImage(sprite, this.x - this.width/2, this.y - this.height/2 + bounceY, this.width, this.height);
-                    
-                    // Draw honking bubble
-                    this.drawHonkBubble(ctx);
                 } else {
                     ctx.drawImage(sprite, this.x - this.width/2, this.y - this.height/2, this.width, this.height);
                 }
@@ -675,42 +796,6 @@ class Vehicle {
             // Fallback drawing
             this.drawFallback(ctx);
         }
-    }
-    
-    /**
-     * Draws the honk speech bubble
-     * @param {CanvasRenderingContext2D} ctx - The canvas rendering context
-     */
-    drawHonkBubble(ctx) {
-        // Draw speech bubble
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        
-        // Draw an animated honk bubble
-        const bubbleSize = 15 + Math.sin(this.honkAnimationTimer * Math.PI * 10) * 5;
-        
-        ctx.beginPath();
-        ctx.arc(
-            this.x, 
-            this.y - this.height/2 - bubbleSize, 
-            bubbleSize, 
-            0, 
-            Math.PI * 2
-        );
-        ctx.fill();
-        
-        // Draw connecting triangle
-        ctx.beginPath();
-        ctx.moveTo(this.x, this.y - this.height/2 - bubbleSize + 5);
-        ctx.lineTo(this.x - 5, this.y - this.height/2);
-        ctx.lineTo(this.x + 5, this.y - this.height/2);
-        ctx.fill();
-        
-        // Draw "HONK" text
-        ctx.fillStyle = '#333';
-        ctx.font = 'bold 10px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('HONK', this.x, this.y - this.height/2 - bubbleSize);
     }
     
     /**
@@ -875,17 +960,79 @@ class Vehicle {
     
     /**
      * Handles what happens when this vehicle is hit by a dropping
+     * @param {number} powerLevel - The current power level of the bird (1-5)
      * @returns {number} Score value based on whether the vehicle was honking
      */
-    handleHit() {
-        const wasHonking = this.isHonking;
+    handleHit(powerLevel = 1) {
+        // If already hit, don't process again
+        if (this.hitByPoop) return 0;
+        
+        // Store whether the vehicle was honking or recently honking
+        const wasHonking = this.isCurrentlyHonking();
         
         // Stop honking
         this.stopHonkSound();
         this.isHonking = false;
         
-        // Return score based on whether the vehicle was honking
-        return wasHonking ? 10 : -5;
+        // Clear sound waves animation
+        this.soundWaves = [];
+        
+        // Mark vehicle as hit by poop
+        this.hitByPoop = true;
+        this.hitTimer = 0;
+        
+        // Adjust hit duration based on power level
+        // Power level 1: 3 seconds (default)
+        // Power level 2: 2 seconds
+        // Power level 3: 1 second
+        // Power level 4: 0.5 seconds
+        // Power level 5: instant (0 seconds)
+        this.hitDuration = powerLevel === 5 ? 0 : 
+                          powerLevel === 4 ? 0.5 :
+                          powerLevel === 3 ? 1.0 :
+                          powerLevel === 2 ? 2.0 : 3.0;
+        
+        // Return 5 points if the vehicle was honking or recently honking, -10 if it wasn't
+        return wasHonking ? 5 : -10;
+    }
+    
+    /**
+     * Draws sound waves emanating from a honking vehicle
+     * @param {CanvasRenderingContext2D} ctx - The canvas rendering context
+     */
+    drawSoundWaves(ctx) {
+        // Update existing sound waves
+        for (let i = 0; i < this.soundWaves.length; i++) {
+            const wave = this.soundWaves[i];
+            
+            // Draw the sound wave
+            ctx.beginPath();
+            ctx.strokeStyle = `rgba(0, 0, 0, ${wave.opacity})`;
+            ctx.lineWidth = 2;
+            ctx.arc(
+                this.x,
+                this.y - this.height / 2,
+                wave.radius,
+                0,
+                Math.PI * 2
+            );
+            ctx.stroke();
+            
+            // Expand the wave
+            wave.radius += 2;
+            wave.opacity -= 0.03;
+        }
+        
+        // Remove faded waves
+        this.soundWaves = this.soundWaves.filter(wave => wave.opacity > 0);
+        
+        // Add new wave when needed
+        if (Math.random() < 0.1 && this.soundWaves.length < 5) {
+            this.soundWaves.push({
+                radius: 5,
+                opacity: 1
+            });
+        }
     }
 }
 
