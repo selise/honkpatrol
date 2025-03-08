@@ -23,20 +23,40 @@ class Game {
         // Scoring and progression
         this.score = 0;
         this.wave = 1;
-        this.vehiclesPerWave = 5; // Starting with a smaller, more manageable number
+        this.vehiclesPerWave = 10; // Doubled from 5
         this.vehiclesSpawned = 0;
         this.waveTimer = 0;
         this.waveDuration = 30; // 30 seconds per wave
         
+        // Initialize Vehicle class with starting wave
+        Vehicle.setCurrentWave(this.wave);
+        
         // Vehicle spawning
         this.vehicleSpawnTimer = 0;
         this.baseSpawnInterval = 2; // Initial seconds between vehicle spawns
-        this.maxVehicles = 15; // Maximum number of vehicles on screen at once
+        this.maxVehicles = 20; // Doubled from 10 to accommodate more vehicles
+        
+        // Emergency mode tracking (after crashes)
+        this.emergencyMode = false;
+        this.emergencyVehiclesRemaining = 0;
         
         // Food spawning
         this.foodSpawnTimer = 0;
         this.foodSpawnInterval = 10; // Seconds between food spawns
         this.maxFoods = 3; // Maximum number of food items allowed
+        
+        // Set up event listener for vehicle crashes
+        if (typeof window !== 'undefined') {
+            window.addEventListener('vehicleCrash', (event) => {
+                this.enterEmergencyMode();
+                
+                // Create a special effect at the crash location
+                if (event.detail && typeof event.detail.x === 'number' && typeof event.detail.y === 'number') {
+                    // Add a more dramatic crash effect
+                    this.createCrashEffect(event.detail.x, event.detail.y);
+                }
+            });
+        }
     }
 
     /**
@@ -57,6 +77,11 @@ class Game {
         this.waveTimer += deltaTime;
         if (this.waveTimer >= this.waveDuration) {
             this.startNewWave();
+        }
+        
+        // If bird is dead, don't update anything else
+        if (this.bird.isDead) {
+            return;
         }
         
         // Update bird
@@ -93,67 +118,93 @@ class Game {
             return vehicle.update(deltaTime, this.vehicles);
         });
         
+        // Check for honking vehicles near the bird
+        this.checkHonkingVehiclesNearBird();
+        
         // Update food items
         this.foods = this.foods.filter(food => {
-            return food.update(deltaTime);
-        });
-        
-        // Update effects (like fire animations)
-        this.effects = this.effects.filter(effect => {
-            return effect.update(deltaTime);
-        });
-        
-        // Check for bird collision with food
-        this.foods = this.foods.filter(food => {
+            // Update food animation and movement
+            const foodActive = food.update(deltaTime);
+            if (!foodActive) return false; // Remove food if it's no longer active
+            
+            // Check for collision with bird
             if (food.checkCollision(this.bird)) {
                 // Bird ate the food
                 this.bird.eatFood(food);
+                
+                // Create healing effect
+                this.createHealEffect(food.x, food.y);
+                
                 return false; // Remove the food
             }
             return true; // Keep the food
         });
-
+        
         // Update droppings and check collisions
         this.droppings = this.droppings.filter(dropping => {
-            // Handle different dropping types
-            if (dropping.type === 'single') {
-                // Update position for single dropping
-                dropping.y += dropping.speed * deltaTime;
+            // Update dropping position
+            dropping.y += dropping.speed * deltaTime;
+            
+            // Check for collision with any vehicle
+            let hasCollided = false;
+            let hitVehicles = [];
+            
+            // First pass: identify all vehicles within splash radius
+            for (const vehicle of this.vehicles) {
+                if (vehicle.checkCollision(dropping)) {
+                    // Direct hit
+                    hitVehicles.push(vehicle);
+                    hasCollided = true;
+                } else if (dropping.splashRadius > 0) {
+                    // Check for splash damage
+                    const dx = vehicle.x - dropping.x;
+                    const dy = vehicle.y - dropping.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance <= dropping.splashRadius) {
+                        hitVehicles.push(vehicle);
+                        hasCollided = true;
+                    }
+                }
+            }
+            
+            // Second pass: handle all hit vehicles
+            for (const vehicle of hitVehicles) {
+                const wasHonking = vehicle.isHonking;
+                const points = vehicle.handleHit(this.bird.getPowerUpState().powerUpLevel);
                 
-                // Single poop collision handling
-                return this.handleDroppingCollisions(dropping, dropping);
-            } else if (dropping.type === 'multi' || dropping.type === 'laser') {
-                // For multi and laser types, they have their own update function
-                const stillActive = dropping.update(deltaTime);
+                // Add score based on honking state
+                this.score = Math.max(0, this.score + points); // Ensure score doesn't go below 0
                 
-                // For laser and multi types, handle collisions without removing individual poops
-                const poops = dropping.getPoops();
-                let anyCollision = false;
+                // Create score animation at the hit location
+                this.createScoreAnimation(dropping.x, dropping.y, points);
                 
-                for (const poop of poops) {
-                    // Check for collisions but don't remove individual poops
-                    // This allows both laser and multi types to hit multiple vehicles
-                    if (this.checkPoopCollisionWithVehicles(poop, dropping)) {
-                        anyCollision = true;
+                // Play appropriate sound effect
+                if (wasHonking) {
+                    // Play hit sound
+                    if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.explosion) {
+                        assets.sounds.effects.explosion.currentTime = 0;
+                        assets.sounds.effects.explosion.play();
+                    }
+                } else {
+                    // Play miss sound
+                    if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.splat) {
+                        assets.sounds.effects.splat.currentTime = 0;
+                        assets.sounds.effects.splat.play();
                     }
                 }
                 
-                // Both laser and multi types remain until either:
-                // - Their lifetime expires (laser)
-                // - They go off screen (multi)
-                // This allows them to hit multiple vehicles
-                return stillActive;
-            } else {
-                // Fallback for old dropping format (for backward compatibility)
-                dropping.y += dropping.speed * deltaTime;
-                return dropping.y < this.canvas.height;
+                // Create visual effect at the hit location
+                this.createHitEffect(dropping.x, dropping.y, wasHonking);
             }
+            
+            // Keep the dropping if it's still on screen and hasn't collided
+            return !hasCollided && dropping.y < this.canvas.height;
         });
         
-        // Update visual effects
+        // Update effects (like fire and healing animations)
         this.effects = this.effects.filter(effect => {
-            effect.lifetime -= deltaTime;
-            return effect.lifetime > 0;
+            return effect.update(deltaTime);
         });
         
         // Start a new wave if all vehicles have been spawned and none remain
@@ -165,6 +216,54 @@ class Game {
         this.scoreAnimations = this.scoreAnimations.filter(animation => {
             return animation.update(deltaTime);
         });
+    }
+
+    /**
+     * Checks if any honking vehicles are near the bird
+     */
+    checkHonkingVehiclesNearBird() {
+        // Get bird position
+        const birdPos = this.bird.getPosition();
+        const birdX = birdPos.x + this.bird.width / 2;
+        const birdY = birdPos.y + this.bird.height / 2;
+        
+        // Get effective wave number, capped at 3
+        const effectiveWave = Math.min(this.wave, 3);
+        
+        // Base detection radius - scales with wave number (capped at wave 3)
+        const baseRadius = 100; // Starting radius at wave 1
+        const waveMultiplier = 1.0 + (effectiveWave - 1) * 0.2; // 20% increase per wave
+        
+        // Check each vehicle
+        for (const vehicle of this.vehicles) {
+            // Only check vehicles that are currently honking
+            if (vehicle.isHonking) {
+                // Calculate distance between bird and vehicle
+                const dx = vehicle.x - birdX;
+                const dy = vehicle.y - birdY;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Apply different detection radius based on vehicle type
+                let detectionRadius = baseRadius * waveMultiplier;
+                
+                // Emergency vehicles have 70% larger detection radius
+                if (vehicle.type === 'emergency') {
+                    detectionRadius *= 1.7;
+                }
+                
+                // If the bird is within the scaled detection radius of a honking vehicle, damage it
+                if (distance < detectionRadius) {
+                    // Emergency vehicles cause more hearing damage
+                    if (vehicle.type === 'emergency') {
+                        // Double damage for emergency vehicles
+                        this.bird.experienceHonk();
+                        this.bird.experienceHonk();
+                    } else {
+                        this.bird.experienceHonk();
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -206,18 +305,12 @@ class Game {
      */
     startNewWave() {
         this.wave++;
-        // More balanced progression: add 5 vehicles per wave up to wave 5, then add 10 per wave
-        if (this.wave <= 5) {
-            this.vehiclesPerWave += 5; // +5 vehicles per wave (5, 10, 15, 20, 25)
-        } else {
-            this.vehiclesPerWave += 10; // +10 for later waves (35, 45, 55, etc.)
-        }
-        
-        // Cap the maximum vehicles per wave at 100 to prevent it from becoming unplayable
-        this.vehiclesPerWave = Math.min(this.vehiclesPerWave, 100);
-        
+        this.vehiclesPerWave *= 2; // Double the number of vehicles each wave
         this.vehiclesSpawned = 0;
         this.waveTimer = 0;
+        
+        // Update the Vehicle class with the new wave number
+        Vehicle.setCurrentWave(this.wave);
         
         // Play wave start sound
         if (assets && assets.sounds && assets.sounds.ui && assets.sounds.ui.start) {
@@ -305,8 +398,43 @@ class Game {
         
         // Draw HUD
         this.drawHUD();
+        
+        // Draw game over screen if bird is dead
+        if (this.bird.isDead) {
+            this.drawGameOverScreen();
+        }
     }
     
+    /**
+     * Gets the appropriate hearing health image based on health percentage
+     * @param {number} healthPercent - Current health percentage (0-100)
+     * @returns {HTMLImageElement|null} The appropriate image or null if not found
+     */
+    getHearingHealthImage(healthPercent) {
+        // If assets aren't loaded yet, return null
+        if (!assets || !assets.visuals || !assets.visuals.game || !assets.visuals.game.hearing_health) {
+            return null;
+        }
+        
+        // The available health levels
+        const availableLevels = [10, 20, 30, 40, 50, 60, 70, 80, 100];
+        
+        // Find the appropriate image based on health percentage
+        // We want the highest level that's less than or equal to the current health
+        let selectedLevel = 10; // Default to lowest level
+        
+        for (const level of availableLevels) {
+            if (healthPercent >= level) {
+                selectedLevel = level;
+            } else {
+                break; // Stop once we find a level higher than current health
+            }
+        }
+        
+        // Return the corresponding image
+        return assets.visuals.game.hearing_health[selectedLevel];
+    }
+
     /**
      * Draws the heads-up display (HUD)
      */
@@ -349,15 +477,227 @@ class Game {
         this.ctx.font = '18px Arial';
         this.ctx.fillText(`Vehicles: ${this.vehiclesSpawned}/${this.vehiclesPerWave}`, 10, 70);
         
+        // Draw health bar
+        const healthBarWidth = 200;
+        const healthBarHeight = 20;
+        const healthBarX = 60; // Moved further right to make room for ear icon
+        const healthBarY = this.canvas.height - 30;
+        
+        // Get current health percentage
+        const healthPercent = this.bird.getHealthPercentage();
+        
+        // Draw appropriate hearing health image based on health percentage
+        const hearingImage = this.getHearingHealthImage(healthPercent);
+        
+        if (hearingImage) {
+            // Draw the appropriate hearing health image
+            const earSize = 40;
+            const earX = healthBarX - earSize - 5;
+            const earY = healthBarY - (earSize - healthBarHeight) / 2;
+            this.ctx.drawImage(hearingImage, earX, earY, earSize, earSize);
+        } else if (assets && assets.visuals && assets.visuals.game && assets.visuals.game.bird_ears) {
+            // Fallback to bird_ears.png if hearing health images aren't loaded
+            const earImg = assets.visuals.game.bird_ears;
+            const earSize = 40;
+            const earX = healthBarX - earSize - 5;
+            const earY = healthBarY - (earSize - healthBarHeight) / 2;
+            this.ctx.drawImage(earImg, earX, earY, earSize, earSize);
+        } else {
+            // Final fallback to the simplified ear drawing if no images are loaded
+            this.drawEarSymbol(healthBarX - 25, healthBarY + healthBarHeight/2);
+        }
+        
+        // Health bar background
+        this.ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+        this.ctx.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+        
+        // Current health
+        this.ctx.fillStyle = this.getHealthColor(healthPercent);
+        this.ctx.fillRect(healthBarX, healthBarY, healthBarWidth * (healthPercent / 100), healthBarHeight);
+        
+        // Health bar border
+        this.ctx.strokeStyle = 'black';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+        
+        // Health text
+        this.ctx.fillStyle = 'white';
+        this.ctx.textAlign = 'center';
+        this.ctx.font = 'bold 14px Arial';
+        this.ctx.fillText(`Hearing: ${Math.round(healthPercent)}%`, healthBarX + healthBarWidth / 2, healthBarY + healthBarHeight / 2 + 5);
+        
+        this.ctx.restore();
+    }
+    
+    /**
+     * Draws an ear symbol next to the health bar
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     */
+    drawEarSymbol(x, y) {
+        this.ctx.save();
+        
+        // Make the ear larger and more visible
+        const scale = 1.5;
+        
+        // Fill with a more noticeable color
+        this.ctx.fillStyle = '#FF9966'; // Peachy color for the ear
+        
+        // Draw the outer ear shape
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y - 10 * scale);
+        this.ctx.bezierCurveTo(
+            x + 15 * scale, y - 15 * scale, // Control point 1
+            x + 20 * scale, y, // Control point 2
+            x + 15 * scale, y + 10 * scale // End point
+        );
+        this.ctx.bezierCurveTo(
+            x + 10 * scale, y + 5 * scale, // Control point 1
+            x + 5 * scale, y, // Control point 2
+            x, y - 10 * scale // End point (back to start)
+        );
+        this.ctx.fill(); // Fill first
+        
+        // Stroke with black outline after filling
+        this.ctx.strokeStyle = 'black';
+        this.ctx.lineWidth = 2;
+        this.ctx.stroke();
+        
+        // Inner ear detail
+        this.ctx.beginPath();
+        this.ctx.moveTo(x + 5 * scale, y - 5 * scale);
+        this.ctx.bezierCurveTo(
+            x + 12 * scale, y - 8 * scale, // Control point 1
+            x + 15 * scale, y, // Control point 2
+            x + 10 * scale, y + 5 * scale // End point
+        );
+        this.ctx.stroke();
+        
+        // Add a sound wave symbol coming into the ear
+        this.ctx.beginPath();
+        const waveX = x - 15;
+        const waveSize = 6;
+        this.ctx.arc(waveX, y, waveSize, 0.25 * Math.PI, 1.75 * Math.PI);
+        this.ctx.arc(waveX, y, waveSize * 1.8, 1.75 * Math.PI, 0.25 * Math.PI, true);
+        this.ctx.strokeStyle = '#333';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.stroke();
+        
         this.ctx.restore();
     }
 
     /**
+     * Get color for health bar based on percentage
+     * @param {number} percent - Health percentage
+     * @returns {string} Color string
+     */
+    getHealthColor(percent) {
+        if (percent > 60) {
+            return 'rgba(0, 255, 0, 0.8)'; // Green for high health
+        } else if (percent > 30) {
+            return 'rgba(255, 255, 0, 0.8)'; // Yellow for medium health
+        } else {
+            return 'rgba(255, 0, 0, 0.8)'; // Red for low health
+        }
+    }
+
+    /**
+     * Activates emergency mode after a crash
+     */
+    enterEmergencyMode() {
+        // Set emergency mode
+        this.emergencyMode = true;
+        this.emergencyVehiclesRemaining = 10;
+        
+        console.log("⚠️ CRASH DETECTED! Entering emergency mode. Next 10 vehicles will be emergency vehicles.");
+    }
+    
+    /**
      * Spawns a new vehicle
+     * @returns {Vehicle} The spawned vehicle
      */
     spawnVehicle() {
-        // Create a new vehicle and add it to the array
-        const vehicle = new Vehicle(this.canvas.width, this.canvas.height);
+        // Create a new vehicle based on current mode
+        let vehicle;
+        
+        if (this.emergencyMode && this.emergencyVehiclesRemaining > 0) {
+            // Check for valid emergency vehicle sprites
+            const leftSprites = assets.visuals.vehicles?.emergency_sprites?.left || [];
+            const rightSprites = assets.visuals.vehicles?.emergency_sprites?.right || [];
+            
+            // Find valid sprite indices (non-null sprites)
+            const validLeftIndices = [];
+            const validRightIndices = [];
+            
+            for (let i = 0; i < leftSprites.length; i++) {
+                if (leftSprites[i]) validLeftIndices.push(i);
+            }
+            
+            for (let i = 0; i < rightSprites.length; i++) {
+                if (rightSprites[i]) validRightIndices.push(i);
+            }
+            
+            let emergencyDirection = null;
+            let spriteIndex = null;
+            
+            // Determine if we can create an emergency vehicle and which direction to use
+            if (validLeftIndices.length > 0 && validRightIndices.length > 0) {
+                // Both directions are valid, choose randomly
+                emergencyDirection = Math.random() < 0.5 ? 'left' : 'right';
+                spriteIndex = emergencyDirection === 'left' 
+                    ? validLeftIndices[Math.floor(Math.random() * validLeftIndices.length)]
+                    : validRightIndices[Math.floor(Math.random() * validRightIndices.length)];
+            } else if (validLeftIndices.length > 0) {
+                // Only left direction is valid
+                emergencyDirection = 'left';
+                spriteIndex = validLeftIndices[Math.floor(Math.random() * validLeftIndices.length)];
+            } else if (validRightIndices.length > 0) {
+                // Only right direction is valid
+                emergencyDirection = 'right';
+                spriteIndex = validRightIndices[Math.floor(Math.random() * validRightIndices.length)];
+            }
+            
+            if (emergencyDirection) {
+                // Create the emergency vehicle with verified assets
+                vehicle = new Vehicle(this.canvas.width, this.canvas.height);
+                
+                // Override the direction and sprite index
+                vehicle.direction = emergencyDirection;
+                vehicle.spriteIndex = spriteIndex;
+                
+                // Make sure the position is correct for the direction
+                if (vehicle.direction === 'left') {
+                    vehicle.x = this.canvas.width + vehicle.width / 2;
+                    vehicle.speed = -(Math.random() * 100 + 50); // -150 to -50 pixels per second
+                } else {
+                    vehicle.x = -vehicle.width / 2;
+                    vehicle.speed = Math.random() * 100 + 50; // 50 to 150 pixels per second
+                }
+                vehicle.originalSpeed = vehicle.speed;
+                vehicle.targetSpeed = vehicle.speed;
+                
+                // Set the type to emergency
+                vehicle.type = 'emergency';
+            } else {
+                // No valid emergency sprites found, create a regular vehicle
+                vehicle = new Vehicle(this.canvas.width, this.canvas.height);
+                console.warn('No valid emergency vehicle sprites found, spawning normal vehicle instead');
+            }
+            
+            // Decrement counter
+            this.emergencyVehiclesRemaining--;
+            
+            // Exit emergency mode when counter reaches zero
+            if (this.emergencyVehiclesRemaining <= 0) {
+                this.emergencyMode = false;
+                console.log("Emergency response complete. Returning to normal traffic patterns.");
+            }
+        } else {
+            // Create a normal vehicle (random type based on probabilities)
+            vehicle = new Vehicle(this.canvas.width, this.canvas.height);
+        }
+        
+        // Add to vehicles array
         this.vehicles.push(vehicle);
         
         // If the vehicle is honking, make it honk immediately
@@ -582,139 +922,137 @@ class Game {
     }
 
     /**
-     * Handle collision checks for a dropping or sub-dropping
-     * @param {Object} poop - The individual poop to check for collisions
-     * @param {Object} parentDropping - The parent dropping object (for multi/laser types)
-     * @returns {boolean} true if the dropping should be kept, false if it collided
-     * @private
+     * Draws the game over screen
      */
-    handleDroppingCollisions(poop, parentDropping) {
-        // Check for collision with any vehicle
-        let hasCollided = false;
-        let hitVehicles = [];
+    drawGameOverScreen() {
+        this.ctx.save();
         
-        // First pass: identify all vehicles within splash radius
-        for (const vehicle of this.vehicles) {
-            if (vehicle.checkCollision(poop)) {
-                // Direct hit
-                hitVehicles.push(vehicle);
-                hasCollided = true;
-            } else if (poop.splashRadius > 0) {
-                // Check for splash damage
-                const dx = vehicle.x - poop.x;
-                const dy = vehicle.y - poop.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                
-                if (distance <= poop.splashRadius) {
-                    hitVehicles.push(vehicle);
-                    hasCollided = true;
-                }
-            }
-        }
+        // Semi-transparent black overlay
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Second pass: handle all hit vehicles
-        for (const vehicle of hitVehicles) {
-            const wasHonking = vehicle.isHonking;
-            const points = vehicle.handleHit(this.bird.getPowerUpState().powerUpLevel);
-            
-            // Add score based on honking state
-            this.score = Math.max(0, this.score + points); // Ensure score doesn't go below 0
-            
-            // Create score animation at the hit location
-            this.createScoreAnimation(poop.x, poop.y, points);
-            
-            // Play appropriate sound effect
-            if (wasHonking) {
-                // Play hit sound
-                if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.explosion) {
-                    assets.sounds.effects.explosion.currentTime = 0;
-                    assets.sounds.effects.explosion.play();
-                }
-            } else {
-                // Play miss sound
-                if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.splat) {
-                    assets.sounds.effects.splat.currentTime = 0;
-                    assets.sounds.effects.splat.play();
-                }
-            }
-            
-            // Create visual effect at the hit location
-            this.createHitEffect(poop.x, poop.y, wasHonking);
-        }
+        // Game over text
+        this.ctx.fillStyle = 'white';
+        this.ctx.textAlign = 'center';
+        this.ctx.font = 'bold 48px Arial';
+        this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 3);
         
-        // For single dropping type, keep it if it's still on screen and hasn't collided
-        return !hasCollided && poop.y < this.canvas.height;
+        // Score
+        this.ctx.font = '32px Arial';
+        this.ctx.fillText(`Final Score: ${this.score}`, this.canvas.width / 2, this.canvas.height / 2);
+        
+        // Wave reached
+        this.ctx.font = '24px Arial';
+        this.ctx.fillText(`Wave Reached: ${this.wave}`, this.canvas.width / 2, this.canvas.height / 2 + 50);
+        
+        // Restart instructions
+        this.ctx.font = '18px Arial';
+        this.ctx.fillText('Refresh the page to play again', this.canvas.width / 2, this.canvas.height * 3/4);
+        
+        this.ctx.restore();
     }
 
     /**
-     * Check for collisions between a poop and vehicles, but don't remove the poop
-     * Used for laser type which should hit multiple vehicles
-     * @param {Object} poop - The individual poop to check for collisions
-     * @param {Object} parentDropping - The parent dropping object
-     * @returns {boolean} true if any collision occurred
-     * @private
+     * Creates a healing visual effect
+     * @param {number} x - X position of the effect
+     * @param {number} y - Y position of the effect
      */
-    checkPoopCollisionWithVehicles(poop, parentDropping) {
-        // Check for collision with any vehicle
-        let hasCollided = false;
-        let hitVehicles = [];
-        
-        // First pass: identify all vehicles within splash radius
-        for (const vehicle of this.vehicles) {
-            if (vehicle.checkCollision(poop)) {
-                // Direct hit
-                hitVehicles.push(vehicle);
-                hasCollided = true;
-            } else if (poop.splashRadius > 0) {
-                // Check for splash damage
-                const dx = vehicle.x - poop.x;
-                const dy = vehicle.y - poop.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
+    createHealEffect(x, y) {
+        this.effects.push({
+            x: x,
+            y: y,
+            radius: 20,
+            color: '#00FF00', // Green for healing
+            lifetime: 0.7, // seconds
+            timer: 0,
+            update: function(deltaTime) {
+                this.timer += deltaTime;
+                return this.timer < this.lifetime;
+            },
+            draw: function(ctx) {
+                // Calculate opacity based on remaining lifetime
+                const opacity = Math.max(0, 1 - (this.timer / this.lifetime));
                 
-                if (distance <= poop.splashRadius) {
-                    hitVehicles.push(vehicle);
-                    hasCollided = true;
-                }
+                // Draw expanding circle
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * (1 + this.timer / this.lifetime * 2), 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw plus sign in the middle
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                
+                // Horizontal line
+                ctx.moveTo(this.x - 10, this.y);
+                ctx.lineTo(this.x + 10, this.y);
+                
+                // Vertical line
+                ctx.moveTo(this.x, this.y - 10);
+                ctx.lineTo(this.x, this.y + 10);
+                
+                ctx.stroke();
+                ctx.restore();
             }
-        }
+        });
         
-        // Second pass: handle all hit vehicles
-        for (const vehicle of hitVehicles) {
-            const wasHonking = vehicle.isHonking;
-            const points = vehicle.handleHit(this.bird.getPowerUpState().powerUpLevel);
+        // Play healing sound if available
+        if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.powerup) {
+            // Use powerup sound for healing
+            const sound = assets.sounds.effects.powerup;
+            sound.currentTime = 0;
+            sound.play().catch(e => console.warn('Could not play healing sound:', e));
+        }
+    }
+
+    /**
+     * Creates a visual effect for a vehicle crash
+     * @param {number} x - X position of the crash
+     * @param {number} y - Y position of the crash
+     */
+    createCrashEffect(x, y) {
+        // Create multiple explosion effects for a more dramatic crash
+        for (let i = 0; i < 3; i++) {
+            // Random offset for each explosion
+            const offsetX = (Math.random() - 0.5) * 40;
+            const offsetY = (Math.random() - 0.5) * 20;
             
-            // Add score based on honking state
-            this.score = Math.max(0, this.score + points); // Ensure score doesn't go below 0
-            
-            // Create score animation at the hit location
-            this.createScoreAnimation(poop.x, poop.y, points);
-            
-            // Play appropriate sound effect
-            if (wasHonking) {
-                // Play hit sound
-                if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.explosion) {
-                    assets.sounds.effects.explosion.currentTime = 0;
-                    assets.sounds.effects.explosion.play();
+            // Create explosion with random size and duration
+            this.effects.push({
+                x: x + offsetX,
+                y: y + offsetY,
+                radius: 30 + Math.random() * 20, // 30-50 pixel radius
+                color: `rgba(${200 + Math.random() * 55}, ${100 + Math.random() * 50}, 0, 0.8)`, // Orange-red
+                lifetime: 0.8 + Math.random() * 0.4, // 0.8-1.2 seconds
+                timer: 0,
+                update: function(deltaTime) {
+                    this.timer += deltaTime;
+                    return this.timer < this.lifetime;
+                },
+                draw: function(ctx) {
+                    // Calculate opacity based on remaining lifetime
+                    const opacity = Math.max(0, 1 - (this.timer / this.lifetime));
+                    
+                    // Draw expanding circle with fading opacity
+                    ctx.save();
+                    ctx.globalAlpha = opacity;
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius * (1 + this.timer / this.lifetime), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
                 }
-            } else {
-                // Play miss sound
-                if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.splat) {
-                    assets.sounds.effects.splat.currentTime = 0;
-                    assets.sounds.effects.splat.play();
-                }
-            }
-            
-            // Create visual effect at the hit location
-            this.createHitEffect(poop.x, poop.y, wasHonking);
+            });
         }
         
-        // If this is a multi-type poop and it hit something, mark it as inactive
-        // Laser poops stay active to hit multiple targets along their path
-        if (hasCollided && parentDropping.type === 'multi' && poop.active) {
-            poop.active = false;
+        // Play a crash sound if available
+        if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.crash) {
+            assets.sounds.effects.crash.currentTime = 0;
+            assets.sounds.effects.crash.play();
         }
-        
-        return hasCollided;
     }
 }
 

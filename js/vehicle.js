@@ -5,7 +5,39 @@
 class Vehicle {
     // Static property to track active honk sounds
     static activeHonkSounds = 0;
-    static MAX_CONCURRENT_HONKS = 5;
+    static MAX_CONCURRENT_HONKS = 3;
+    
+    // Static property for the current wave (will be updated by the Game class)
+    static currentWave = 1;
+    
+    // Static method to update the current wave
+    static setCurrentWave(wave) {
+        Vehicle.currentWave = Math.max(1, wave);
+    }
+    
+    /**
+     * Static method to check if assets exist for a given vehicle type and direction
+     * @param {string} type - The vehicle type
+     * @param {string} direction - The direction ('left' or 'right')
+     * @param {number} spriteIndex - Optional specific sprite index to check
+     * @returns {boolean} - Whether assets exist for this vehicle type and direction
+     */
+    static hasAssets(type, direction, spriteIndex = null) {
+        if (!assets.visuals.vehicles) return false;
+        if (!assets.visuals.vehicles[`${type}_sprites`]) return false;
+        if (!assets.visuals.vehicles[`${type}_sprites`][direction]) return false;
+        if (!assets.visuals.vehicles[`${type}_sprites`][direction].length) return false;
+        
+        const spriteArray = assets.visuals.vehicles[`${type}_sprites`][direction];
+        
+        // If a specific sprite index is requested, check just that one
+        if (spriteIndex !== null) {
+            return spriteIndex < spriteArray.length && !!spriteArray[spriteIndex];
+        }
+        
+        // Otherwise, check if at least one sprite exists that isn't null or undefined
+        return spriteArray.some(sprite => !!sprite);
+    }
     
     /**
      * Creates a new Vehicle instance
@@ -17,17 +49,59 @@ class Vehicle {
         this.canvasWidth = canvasWidth;
         this.canvasHeight = canvasHeight;
         
-        // Randomly select vehicle type
-        const types = ['car', 'truck', 'bus', 'emergency'];
-        this.type = types[Math.floor(Math.random() * types.length)];
-        
-        // Randomly select direction
+        // Randomly select direction first (needed for asset checking)
         this.direction = Math.random() < 0.5 ? 'left' : 'right';
         
-        // Select a specific sprite variant
-        const spriteArray = assets.visuals.vehicles[`${this.type}_sprites`][this.direction];
-        this.spriteIndex = spriteArray && spriteArray.length > 0 ? 
-            Math.floor(Math.random() * spriteArray.length) : 0;
+        // Possible vehicle types
+        const types = ['car', 'truck', 'bus', 'emergency'];
+        
+        // Try up to 10 times to find a valid vehicle type and sprite
+        let validVehicleFound = false;
+        let attempts = 0;
+        
+        while (!validVehicleFound && attempts < 10) {
+            // Filter types to only include those with valid assets
+            const validTypes = types.filter(type => Vehicle.hasAssets(type, this.direction));
+            
+            if (validTypes.length === 0) {
+                // Try the other direction if no valid types for this direction
+                this.direction = this.direction === 'left' ? 'right' : 'left';
+                attempts++;
+                continue;
+            }
+            
+            // Randomly select from valid types
+            this.type = validTypes[Math.floor(Math.random() * validTypes.length)];
+            
+            // Get sprite array for this type and direction
+            const spriteArray = assets.visuals.vehicles[`${this.type}_sprites`][this.direction];
+            
+            // Find all valid sprite indices (non-null sprites)
+            const validSpriteIndices = [];
+            for (let i = 0; i < spriteArray.length; i++) {
+                if (spriteArray[i]) {
+                    validSpriteIndices.push(i);
+                }
+            }
+            
+            if (validSpriteIndices.length === 0) {
+                // No valid sprites for this type and direction
+                attempts++;
+                continue;
+            }
+            
+            // Select a random valid sprite
+            this.spriteIndex = validSpriteIndices[Math.floor(Math.random() * validSpriteIndices.length)];
+            validVehicleFound = true;
+        }
+        
+        // If we couldn't find a valid vehicle after multiple attempts, use console error
+        // This should never happen in a properly set up game
+        if (!validVehicleFound) {
+            console.error('Failed to find valid vehicle assets after multiple attempts');
+            this.type = 'car'; // Default to car
+            this.spriteIndex = 0; // Default sprite index
+        }
         
         // Set size based on type
         this.width = this.type === 'car' ? 40 : this.type === 'truck' ? 50 : 60;
@@ -726,6 +800,19 @@ class Vehicle {
             this.stopHonkSound();
             this.isHonking = false;
         }
+        
+        // Dispatch a custom crash event for the game to listen to
+        if (typeof window !== 'undefined') {
+            const crashEvent = new CustomEvent('vehicleCrash', { 
+                detail: { 
+                    vehicle: this,
+                    x: this.x,
+                    y: this.y,
+                    type: this.type
+                } 
+            });
+            window.dispatchEvent(crashEvent);
+        }
     }
     
     /**
@@ -735,8 +822,12 @@ class Vehicle {
     draw(ctx) {
         ctx.save();
         
-        // Draw vehicle sprite
-        this.drawVehicleSprite(ctx);
+        // Draw vehicle sprite and continue only if successful
+        if (!this.drawVehicleSprite(ctx)) {
+            // If drawing the sprite failed, don't draw anything else
+            ctx.restore();
+            return;
+        }
         
         // Draw fire if crashed
         if (this.hasCrashed && this.fire) {
@@ -788,14 +879,14 @@ class Vehicle {
                 } else {
                     ctx.drawImage(sprite, this.x - this.width/2, this.y - this.height/2, this.width, this.height);
                 }
-            } else {
-                // Fallback if sprite is null
-                this.drawFallback(ctx);
+                return true; // Successfully drew sprite
             }
-        } else {
-            // Fallback drawing
-            this.drawFallback(ctx);
         }
+        
+        // If we've reached this point, we don't have a valid sprite to draw
+        // Log the issue for debugging but don't draw anything
+        console.warn(`Missing sprite for vehicle type: ${this.type}, direction: ${this.direction}, index: ${this.spriteIndex}`);
+        return false;
     }
     
     /**
@@ -992,6 +1083,12 @@ class Vehicle {
                           powerLevel === 3 ? 1.0 :
                           powerLevel === 2 ? 2.0 : 3.0;
         
+        // Special scoring for emergency vehicles: always deduct 15 points
+        if (this.type === 'emergency') {
+            return -15; // Deduct 15 points for hitting emergency vehicles
+        }
+        
+        // Regular scoring for other vehicles
         // Return 5 points if the vehicle was honking or recently honking, -10 if it wasn't
         return wasHonking ? 5 : -10;
     }
@@ -1001,38 +1098,106 @@ class Vehicle {
      * @param {CanvasRenderingContext2D} ctx - The canvas rendering context
      */
     drawSoundWaves(ctx) {
+        // Get the effective wave number, capped at 3
+        const effectiveWave = Math.min(Vehicle.currentWave, 3);
+        
+        // Calculate wave size multiplier based on the effective wave (capped at wave 3)
+        // Start with 1.0 at wave 1, and add 0.2 for each wave (20% increase per wave)
+        let waveMultiplier = 1.0 + (effectiveWave - 1) * 0.2;
+        
+        // Special case: Emergency vehicles have 55% larger sound waves
+        if (this.type === 'emergency') {
+            waveMultiplier *= 1.55; // 55% larger for emergency vehicles (reduced from 70%)
+        }
+        
         // Update existing sound waves
         for (let i = 0; i < this.soundWaves.length; i++) {
             const wave = this.soundWaves[i];
             
-            // Draw the sound wave
+            // Draw the sound wave with scaled radius
             ctx.beginPath();
             ctx.strokeStyle = `rgba(0, 0, 0, ${wave.opacity})`;
             ctx.lineWidth = 2;
             ctx.arc(
                 this.x,
                 this.y - this.height / 2,
-                wave.radius,
+                wave.radius * waveMultiplier, // Scale radius based on wave multiplier
                 0,
                 Math.PI * 2
             );
             ctx.stroke();
             
-            // Expand the wave
-            wave.radius += 2;
+            // Expansion rate - faster for emergency vehicles
+            let expansionRate = 2 + (effectiveWave - 1) * 0.5;
+            if (this.type === 'emergency') {
+                expansionRate *= 1.3; // 30% faster expansion for emergency vehicles
+            }
+            
+            // Expand the wave (increase expansion rate with wave number, capped at wave 3)
+            wave.radius += expansionRate;
             wave.opacity -= 0.03;
         }
         
         // Remove faded waves
         this.soundWaves = this.soundWaves.filter(wave => wave.opacity > 0);
         
-        // Add new wave when needed
-        if (Math.random() < 0.1 && this.soundWaves.length < 5) {
+        // Add new wave when needed - emergency vehicles produce waves more frequently
+        const newWaveChance = this.type === 'emergency' ? 0.15 : 0.1;
+        if (Math.random() < newWaveChance && this.soundWaves.length < 5) {
             this.soundWaves.push({
                 radius: 5,
                 opacity: 1
             });
         }
+    }
+    
+    /**
+     * Draws a speech bubble indicating the vehicle is honking
+     * @param {CanvasRenderingContext2D} ctx - The canvas rendering context
+     */
+    drawHonkBubble(ctx) {
+        const bubbleWidth = this.width * 0.7;
+        const bubbleHeight = bubbleWidth * 0.7;
+        const bubbleX = this.direction === 'left' ? 
+            this.x - this.width/2 - bubbleWidth/2 :
+            this.x + this.width/2 + bubbleWidth/2;
+        const bubbleY = this.y - this.height/2 - bubbleHeight;
+        
+        // Draw bubble
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.lineWidth = 2;
+        
+        // Draw rounded rectangle for bubble
+        ctx.beginPath();
+        const radius = 8;
+        ctx.moveTo(bubbleX - bubbleWidth/2 + radius, bubbleY - bubbleHeight/2);
+        ctx.lineTo(bubbleX + bubbleWidth/2 - radius, bubbleY - bubbleHeight/2);
+        ctx.quadraticCurveTo(bubbleX + bubbleWidth/2, bubbleY - bubbleHeight/2, bubbleX + bubbleWidth/2, bubbleY - bubbleHeight/2 + radius);
+        ctx.lineTo(bubbleX + bubbleWidth/2, bubbleY + bubbleHeight/2 - radius);
+        ctx.quadraticCurveTo(bubbleX + bubbleWidth/2, bubbleY + bubbleHeight/2, bubbleX + bubbleWidth/2 - radius, bubbleY + bubbleHeight/2);
+        ctx.lineTo(bubbleX - bubbleWidth/2 + radius, bubbleY + bubbleHeight/2);
+        ctx.quadraticCurveTo(bubbleX - bubbleWidth/2, bubbleY + bubbleHeight/2, bubbleX - bubbleWidth/2, bubbleY + bubbleHeight/2 - radius);
+        ctx.lineTo(bubbleX - bubbleWidth/2, bubbleY - bubbleHeight/2 + radius);
+        ctx.quadraticCurveTo(bubbleX - bubbleWidth/2, bubbleY - bubbleHeight/2, bubbleX - bubbleWidth/2 + radius, bubbleY - bubbleHeight/2);
+        ctx.closePath();
+        
+        // Add a pointer to the vehicle
+        ctx.moveTo(bubbleX, bubbleY + bubbleHeight/2);
+        ctx.lineTo(bubbleX - 10, bubbleY + bubbleHeight/2 + 15);
+        ctx.lineTo(bubbleX + 10, bubbleY + bubbleHeight/2 + 15);
+        ctx.closePath();
+        
+        // Fill and stroke the bubble
+        ctx.fill();
+        ctx.stroke();
+        
+        // Draw "HONK!" text
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('HONK!', bubbleX, bubbleY);
     }
 }
 
