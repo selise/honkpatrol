@@ -45,6 +45,9 @@ class Game {
         this.foodSpawnInterval = 10; // Seconds between food spawns
         this.maxFoods = 3; // Maximum number of food items allowed
         
+        // Initialize background elements
+        this.initializeBackgroundElements();
+        
         // Set up event listener for vehicle crashes
         if (typeof window !== 'undefined') {
             window.addEventListener('vehicleCrash', (event) => {
@@ -57,6 +60,66 @@ class Game {
                 }
             });
         }
+    }
+
+    /**
+     * Initialize the fixed background elements to prevent flickering
+     */
+    initializeBackgroundElements() {
+        // Define fixed lane positions with 6 lanes (4 regular + 2 emergency)
+        this.fixedLaneData = {
+            laneStartY: this.canvas.height / 2 - 75, // Position road in middle with more sky view
+            laneHeight: 40, // Slightly smaller lanes to fit 6 lanes
+            totalLanes: 6  // 6 lanes total (4 regular + 2 emergency)
+        };
+        
+        // Pre-generate cloud positions for the sky
+        this.clouds = [];
+        const numClouds = 8;
+        
+        for (let i = 0; i < numClouds; i++) {
+            this.clouds.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * (this.fixedLaneData.laneStartY - 50),
+                width: 60 + Math.random() * 40,
+                height: 30 + Math.random() * 20,
+                opacity: 0.5 + Math.random() * 0.3
+            });
+        }
+        
+        // Pre-generate grass tufts to prevent flickering
+        this.grassTufts = [];
+        const roadEndY = this.fixedLaneData.laneStartY + (this.fixedLaneData.laneHeight * this.fixedLaneData.totalLanes);
+        const numTufts = Math.floor(this.canvas.width / 15);
+        
+        for (let i = 0; i < numTufts; i++) {
+            const x = i * 15 + (Math.random() * 10 - 5);
+            const height = 5 + Math.random() * 10;
+            const greenValue = 100 + Math.floor(Math.random() * 155);
+            
+            this.grassTufts.push({
+                x: x,
+                height: height,
+                color: `rgb(0, ${greenValue}, 0)`
+            });
+        }
+    }
+    
+    /**
+     * Pre-generate road texture data to avoid randomness each frame
+     */
+    generateRoadTextureData(y, height) {
+        const texturePoints = [];
+        
+        for (let i = 0; i < height; i += 2) {
+            for (let j = 0; j < this.canvas.width; j += 2) {
+                if (Math.random() < 0.1) {
+                    texturePoints.push({x: j, y: y + i});
+                }
+            }
+        }
+        
+        return texturePoints;
     }
 
     /**
@@ -326,47 +389,8 @@ class Game {
         // Clear canvas
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Draw sky (increased height for more sky space)
-        this.ctx.fillStyle = '#87CEEB';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height - 250); // Leave more space for sky
-        
-        // Draw road and scenery
-        if (this.vehicles.length > 0) {
-            const vehicle = this.vehicles[0]; // Use first vehicle to get lane info
-            const totalLanes = vehicle.totalLanes;
-            const laneHeight = vehicle.laneHeight;
-            const laneStartY = vehicle.laneStartY;
-            
-            // Draw trees on the left side
-            this.drawTrees(50, laneStartY, laneHeight * totalLanes, 'left');
-            
-            // Draw trees on the right side
-            this.drawTrees(this.canvas.width - 50, laneStartY, laneHeight * totalLanes, 'right');
-            
-            // Draw road with gradient for depth effect
-            const roadGradient = this.ctx.createLinearGradient(0, laneStartY, 0, laneStartY + laneHeight * totalLanes);
-            roadGradient.addColorStop(0, '#4a4a4a'); // Darker at top
-            roadGradient.addColorStop(1, '#666666'); // Lighter at bottom
-            
-            this.ctx.fillStyle = roadGradient;
-            this.ctx.fillRect(0, laneStartY, this.canvas.width, laneHeight * totalLanes);
-            
-            // Draw road texture (subtle noise pattern)
-            this.drawRoadTexture(laneStartY, laneHeight * totalLanes);
-            
-            // Draw road edges
-            this.ctx.strokeStyle = '#ffffff';
-            this.ctx.lineWidth = 2;
-            this.ctx.beginPath();
-            this.ctx.moveTo(0, laneStartY);
-            this.ctx.lineTo(this.canvas.width, laneStartY);
-            this.ctx.moveTo(0, laneStartY + laneHeight * totalLanes);
-            this.ctx.lineTo(this.canvas.width, laneStartY + laneHeight * totalLanes);
-            this.ctx.stroke();
-        }
-        
-        // Draw ground with grass texture
-        this.drawGround();
+        // Draw all background elements first
+        this.drawBackground();
         
         // Draw food items
         for (const food of this.foods) {
@@ -406,6 +430,166 @@ class Game {
     }
     
     /**
+     * Draws all static background elements in a fixed order
+     */
+    drawBackground() {
+        const { laneStartY, laneHeight, totalLanes } = this.fixedLaneData;
+        const roadHeight = laneHeight * totalLanes;
+        const roadEndY = laneStartY + roadHeight;
+        
+        // 1. SKY SPACE - Draw blue sky with clouds
+        const skyGradient = this.ctx.createLinearGradient(0, 0, 0, laneStartY);
+        skyGradient.addColorStop(0, '#64b5f6'); // Lighter blue at top
+        skyGradient.addColorStop(1, '#bbdefb'); // Slightly lighter blue at horizon
+        this.ctx.fillStyle = skyGradient;
+        this.ctx.fillRect(0, 0, this.canvas.width, laneStartY);
+        
+        // Draw clouds
+        this.drawClouds();
+        
+        // 2. ROAD SPACE - Draw road with gradient for depth effect
+        const roadGradient = this.ctx.createLinearGradient(0, laneStartY, 0, roadEndY);
+        roadGradient.addColorStop(0, '#4a4a4a'); // Darker at top
+        roadGradient.addColorStop(1, '#666666'); // Lighter at bottom
+        
+        this.ctx.fillStyle = roadGradient;
+        this.ctx.fillRect(0, laneStartY, this.canvas.width, roadHeight);
+        
+        // Draw road edges - top and bottom of entire road area
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(0, laneStartY);
+        this.ctx.lineTo(this.canvas.width, laneStartY);
+        this.ctx.moveTo(0, roadEndY);
+        this.ctx.lineTo(this.canvas.width, roadEndY);
+        this.ctx.stroke();
+        
+        // 3. Draw lane separators
+        this.drawLaneSeparators();
+        
+        // 4. BOTTOM SPACE - Draw grass
+        this.drawGrass(roadEndY);
+    }
+    
+    /**
+     * Draw clouds in the sky
+     */
+    drawClouds() {
+        this.ctx.fillStyle = '#ffffff';
+        
+        for (const cloud of this.clouds) {
+            this.ctx.save();
+            this.ctx.globalAlpha = cloud.opacity;
+            
+            // Draw a fluffy cloud using multiple overlapping circles
+            const centerX = cloud.x;
+            const centerY = cloud.y;
+            const width = cloud.width;
+            const height = cloud.height;
+            
+            // Base oval
+            this.ctx.beginPath();
+            this.ctx.ellipse(centerX, centerY, width / 2, height / 2, 0, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Additional "puffs"
+            const numPuffs = 5;
+            const puffRadius = height / 2;
+            
+            for (let i = 0; i < numPuffs; i++) {
+                const angle = (i / numPuffs) * Math.PI;
+                const puffX = centerX + Math.cos(angle) * (width / 2 - puffRadius / 2);
+                const puffY = centerY + Math.sin(angle) * (height / 3);
+                
+                this.ctx.beginPath();
+                this.ctx.arc(puffX, puffY, puffRadius, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+            
+            this.ctx.restore();
+        }
+    }
+    
+    /**
+     * Draw lane separators with specified styles
+     */
+    drawLaneSeparators() {
+        const { laneStartY, laneHeight, totalLanes } = this.fixedLaneData;
+        
+        for (let i = 1; i < totalLanes; i++) {
+            const y = laneStartY + (i * laneHeight);
+            
+            if (i === 1) {
+                // Straight white line between emergency bottom lane and first regular lane
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 3;
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, y);
+                this.ctx.lineTo(this.canvas.width, y);
+                this.ctx.stroke();
+            } else {
+                // Dotted white lines between all other lanes
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 2;
+                this.ctx.setLineDash([15, 10]); // 15px dash, 10px gap
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, y);
+                this.ctx.lineTo(this.canvas.width, y);
+                this.ctx.stroke();
+                this.ctx.setLineDash([]); // Reset to solid line
+            }
+        }
+    }
+    
+    /**
+     * Draw grass in the bottom area
+     */
+    drawGrass(startY) {
+        // Fill the grass area with a green gradient
+        const grassGradient = this.ctx.createLinearGradient(0, startY, 0, this.canvas.height);
+        grassGradient.addColorStop(0, '#4CAF50');  // Darker green at top
+        grassGradient.addColorStop(1, '#81C784');  // Lighter green at bottom
+        
+        this.ctx.fillStyle = grassGradient;
+        this.ctx.fillRect(0, startY, this.canvas.width, this.canvas.height - startY);
+        
+        // Draw pre-computed grass texture/pattern
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.3;
+        
+        // Use pre-generated grass tufts to avoid flickering
+        for (const tuft of this.grassTufts) {
+            this.ctx.fillStyle = tuft.color;
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(tuft.x, startY);
+            this.ctx.lineTo(tuft.x - 5, startY + tuft.height);
+            this.ctx.lineTo(tuft.x, startY + tuft.height / 2);
+            this.ctx.lineTo(tuft.x + 5, startY + tuft.height);
+            this.ctx.closePath();
+            this.ctx.fill();
+        }
+        
+        this.ctx.restore();
+    }
+    
+    /**
+     * Draws the pre-calculated road texture to prevent flickering
+     */
+    drawStoredRoadTexture() {
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.1;
+        this.ctx.fillStyle = '#ffffff';
+        
+        for (const point of this.roadTextureData) {
+            this.ctx.fillRect(point.x, point.y, 2, 2);
+        }
+        
+        this.ctx.restore();
+    }
+    
+    /**
      * Gets the appropriate hearing health image based on health percentage
      * @param {number} healthPercent - Current health percentage (0-100)
      * @returns {HTMLImageElement|null} The appropriate image or null if not found
@@ -441,47 +625,181 @@ class Game {
     drawHUD() {
         this.ctx.save();
         
-        // Draw score
-        this.ctx.fillStyle = '#000';
-        this.ctx.font = 'bold 24px Arial';
-        this.ctx.textAlign = 'left';
-        this.ctx.fillText(`Score: ${this.score}`, 10, 30);
+        // Common styling variables
+        const cornerRadius = 4;
+        const textShadow = true;
         
-        // Draw power level
+        // Common UI element dimensions to match the health bar
+        const elementWidth = 150; // Match health bar width
+        const elementHeight = 15; // Match health bar height
+        const elementFont = 'bold 12px Arial'; // Match health bar font
+        
+        // ============= SCORE DISPLAY =============
+        const scoreX = 10;
+        const scoreY = 10;
+        
+        // Draw drop shadow
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        this.roundRect(scoreX + 2, scoreY + 2, elementWidth, elementHeight, cornerRadius);
+        
+        // Draw background with gradient
+        const scoreGradient = this.ctx.createLinearGradient(scoreX, scoreY, scoreX, scoreY + elementHeight);
+        scoreGradient.addColorStop(0, 'rgba(30, 30, 60, 0.8)');
+        scoreGradient.addColorStop(1, 'rgba(10, 10, 40, 0.8)');
+        this.ctx.fillStyle = scoreGradient;
+        this.roundRect(scoreX, scoreY, elementWidth, elementHeight, cornerRadius);
+        
+        // Add highlight
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.fillRect(scoreX + 2, scoreY + 2, elementWidth - 4, 2);
+        
+        // Draw score text with shadow
+        if (textShadow) {
+            this.ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.shadowBlur = 3;
+            this.ctx.shadowOffsetX = 1;
+            this.ctx.shadowOffsetY = 1;
+        }
+        
+        this.ctx.fillStyle = '#FFFFFF';
+        this.ctx.font = elementFont;
+        this.ctx.textAlign = 'left';
+        this.ctx.fillText(`Score: ${this.score}`, scoreX + 10, scoreY + elementHeight / 2 + 4);
+        
+        // Reset shadow
+        if (textShadow) {
+            this.ctx.shadowColor = 'transparent';
+            this.ctx.shadowBlur = 0;
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 0;
+        }
+        
+        // ============= POWER LEVEL DISPLAY =============
+        const powerX = 10;
+        const powerY = scoreY + elementHeight + 10;
         const powerState = this.bird.getPowerUpState();
-        this.ctx.textAlign = 'right';
-        this.ctx.fillText(`Power Level: ${powerState.powerUpLevel}`, this.canvas.width - 10, 30);
         
-        // Draw wave information
-        this.ctx.textAlign = 'center';
-        this.ctx.fillText(`Wave: ${this.wave}`, this.canvas.width / 2, 30);
+        // Draw drop shadow
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        this.roundRect(powerX + 2, powerY + 2, elementWidth, elementHeight, cornerRadius);
         
-        // Draw wave progress
-        const waveProgressWidth = 200;
-        const waveProgressHeight = 10;
-        const waveProgressX = (this.canvas.width - waveProgressWidth) / 2;
-        const waveProgressY = 40;
+        // Draw background with gradient based on power level
+        const powerGradient = this.ctx.createLinearGradient(powerX, powerY, powerX, powerY + elementHeight);
         
-        // Draw background
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        this.ctx.fillRect(waveProgressX, waveProgressY, waveProgressWidth, waveProgressHeight);
+        // Different gradients based on power level
+        if (powerState.powerUpLevel >= 3) {
+            powerGradient.addColorStop(0, 'rgba(128, 0, 128, 0.8)'); // Purple for high power
+            powerGradient.addColorStop(1, 'rgba(75, 0, 130, 0.8)');
+        } else if (powerState.powerUpLevel >= 2) {
+            powerGradient.addColorStop(0, 'rgba(0, 0, 200, 0.8)'); // Blue for medium power
+            powerGradient.addColorStop(1, 'rgba(0, 0, 150, 0.8)');
+        } else {
+            powerGradient.addColorStop(0, 'rgba(50, 50, 100, 0.8)'); // Default blue-gray
+            powerGradient.addColorStop(1, 'rgba(30, 30, 70, 0.8)');
+        }
         
-        // Draw progress
-        const progress = Math.min(1, this.waveTimer / this.waveDuration);
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        this.ctx.fillRect(waveProgressX, waveProgressY, waveProgressWidth * progress, waveProgressHeight);
+        this.ctx.fillStyle = powerGradient;
+        this.roundRect(powerX, powerY, elementWidth, elementHeight, cornerRadius);
         
-        // Draw vehicles remaining
+        // Add highlight
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.fillRect(powerX + 2, powerY + 2, elementWidth - 4, 2);
+        
+        // Draw power level text with shadow
+        if (textShadow) {
+            this.ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.shadowBlur = 3;
+            this.ctx.shadowOffsetX = 1;
+            this.ctx.shadowOffsetY = 1;
+        }
+        
+        this.ctx.fillStyle = '#FFFFFF';
+        this.ctx.font = elementFont;
         this.ctx.textAlign = 'left';
-        this.ctx.fillStyle = '#000';
-        this.ctx.font = '18px Arial';
-        this.ctx.fillText(`Vehicles: ${this.vehiclesSpawned}/${this.vehiclesPerWave}`, 10, 70);
+        this.ctx.fillText(`Power: ${powerState.powerUpLevel}`, powerX + 10, powerY + elementHeight / 2 + 4);
         
-        // Draw health bar
-        const healthBarWidth = 200;
-        const healthBarHeight = 20;
-        const healthBarX = 60; // Moved further right to make room for ear icon
-        const healthBarY = this.canvas.height - 30;
+        // Reset shadow
+        if (textShadow) {
+            this.ctx.shadowColor = 'transparent';
+            this.ctx.shadowBlur = 0;
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 0;
+        }
+        
+        // ============= WAVE DISPLAY =============
+        const waveX = (this.canvas.width - elementWidth) / 2;
+        const waveY = 10;
+        
+        // Draw drop shadow
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        this.roundRect(waveX + 2, waveY + 2, elementWidth, elementHeight, cornerRadius);
+        
+        // Draw background with gradient
+        const waveGradient = this.ctx.createLinearGradient(waveX, waveY, waveX, waveY + elementHeight);
+        waveGradient.addColorStop(0, 'rgba(60, 30, 30, 0.8)'); // Reddish brown gradient
+        waveGradient.addColorStop(1, 'rgba(40, 10, 10, 0.8)');
+        this.ctx.fillStyle = waveGradient;
+        this.roundRect(waveX, waveY, elementWidth, elementHeight, cornerRadius);
+        
+        // Add highlight
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.fillRect(waveX + 2, waveY + 2, elementWidth - 4, 2);
+        
+        // Draw wave text with shadow
+        if (textShadow) {
+            this.ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            this.ctx.shadowBlur = 3;
+            this.ctx.shadowOffsetX = 1;
+            this.ctx.shadowOffsetY = 1;
+        }
+        
+        this.ctx.fillStyle = '#FFFFFF';
+        this.ctx.font = elementFont;
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`Wave: ${this.wave}`, waveX + elementWidth / 2, waveY + elementHeight / 2 + 4);
+        
+        // Reset shadow
+        if (textShadow) {
+            this.ctx.shadowColor = 'transparent';
+            this.ctx.shadowBlur = 0;
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 0;
+        }
+        
+        // Draw wave progress bar below the wave display
+        const waveProgressWidth = 160;
+        const waveProgressHeight = 8;
+        const waveProgressX = (this.canvas.width - waveProgressWidth) / 2;
+        const waveProgressY = waveY + elementHeight + 5;
+        
+        // Progress background
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        this.roundRect(waveProgressX, waveProgressY, waveProgressWidth, waveProgressHeight, waveProgressHeight / 2);
+        
+        // Progress fill
+        const progress = Math.min(1, this.waveTimer / this.waveDuration);
+        
+        if (progress > 0) {
+            const progressGradient = this.ctx.createLinearGradient(
+                waveProgressX, waveProgressY, 
+                waveProgressX, waveProgressY + waveProgressHeight
+            );
+            progressGradient.addColorStop(0, 'rgba(255, 170, 70, 0.9)'); // Orange-gold gradient
+            progressGradient.addColorStop(1, 'rgba(200, 120, 20, 0.9)');
+            
+            this.ctx.fillStyle = progressGradient;
+            this.roundRect(waveProgressX, waveProgressY, waveProgressWidth * progress, waveProgressHeight, waveProgressHeight / 2);
+            
+            // Add highlight
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            this.ctx.fillRect(waveProgressX + 2, waveProgressY + 1, (waveProgressWidth * progress) - 4, 2);
+        }
+        
+        // Health bar styling enhancements
+        const healthBarWidth = 150;
+        const healthBarHeight = 15;
+        const healthBarX = this.canvas.width - 160;
+        const healthBarY = 30;
         
         // Get current health percentage
         const healthPercent = this.bird.getHealthPercentage();
@@ -490,41 +808,94 @@ class Game {
         const hearingImage = this.getHearingHealthImage(healthPercent);
         
         if (hearingImage) {
-            // Draw the appropriate hearing health image
+            // Draw the appropriate hearing health image - now centered above the health bar
             const earSize = 40;
-            const earX = healthBarX - earSize - 5;
-            const earY = healthBarY - (earSize - healthBarHeight) / 2;
+            // Center the ear icon horizontally over the health bar
+            const earX = healthBarX + (healthBarWidth / 2) - (earSize / 2);
+            // Position the ear icon above the health bar
+            const earY = healthBarY - earSize - 2; // 2px gap between icon and bar
             this.ctx.drawImage(hearingImage, earX, earY, earSize, earSize);
         } else if (assets && assets.visuals && assets.visuals.game && assets.visuals.game.bird_ears) {
             // Fallback to bird_ears.png if hearing health images aren't loaded
             const earImg = assets.visuals.game.bird_ears;
             const earSize = 40;
-            const earX = healthBarX - earSize - 5;
-            const earY = healthBarY - (earSize - healthBarHeight) / 2;
+            // Center the ear icon horizontally over the health bar
+            const earX = healthBarX + (healthBarWidth / 2) - (earSize / 2);
+            // Position the ear icon above the health bar
+            const earY = healthBarY - earSize - 2; // 2px gap between icon and bar
             this.ctx.drawImage(earImg, earX, earY, earSize, earSize);
         } else {
             // Final fallback to the simplified ear drawing if no images are loaded
-            this.drawEarSymbol(healthBarX - 25, healthBarY + healthBarHeight/2);
+            // Center the ear symbol horizontally over the health bar
+            const earX = healthBarX + (healthBarWidth / 2);
+            // Position the ear symbol above the health bar
+            const earY = healthBarY - 15; // Smaller offset for the drawn ear
+            this.drawEarSymbol(earX, earY);
         }
         
-        // Health bar background
-        this.ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-        this.ctx.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+        // Draw drop shadow for depth
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        this.roundRect(healthBarX + 2, healthBarY + 2, healthBarWidth, healthBarHeight, cornerRadius);
         
-        // Current health
-        this.ctx.fillStyle = this.getHealthColor(healthPercent);
-        this.ctx.fillRect(healthBarX, healthBarY, healthBarWidth * (healthPercent / 100), healthBarHeight);
+        // Outer container with gradient
+        const containerGradient = this.ctx.createLinearGradient(
+            healthBarX, healthBarY, 
+            healthBarX, healthBarY + healthBarHeight
+        );
+        containerGradient.addColorStop(0, 'rgba(40, 40, 40, 0.8)');
+        containerGradient.addColorStop(1, 'rgba(20, 20, 20, 0.8)');
+        this.ctx.fillStyle = containerGradient;
+        this.roundRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight, cornerRadius);
         
-        // Health bar border
-        this.ctx.strokeStyle = 'black';
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
+        // Health bar fill with gradient
+        if (healthPercent > 0) {
+            const barWidth = healthBarWidth * (healthPercent / 100);
+            const healthGradient = this.ctx.createLinearGradient(
+                healthBarX, healthBarY, 
+                healthBarX, healthBarY + healthBarHeight
+            );
+            
+            if (healthPercent > 60) {
+                // Good health - green gradient
+                healthGradient.addColorStop(0, '#5fea5f');
+                healthGradient.addColorStop(1, '#3cb371');
+            } else if (healthPercent > 30) {
+                // Medium health - yellow/orange gradient
+                healthGradient.addColorStop(0, '#ffd700');
+                healthGradient.addColorStop(1, '#ffa500');
+            } else {
+                // Low health - red gradient with pulsing effect
+                const pulseIntensity = 0.7 + 0.3 * Math.sin(Date.now() / 200); // Subtle pulsing effect
+                healthGradient.addColorStop(0, `rgba(255, ${Math.floor(60 * pulseIntensity)}, ${Math.floor(60 * pulseIntensity)}, 1)`);
+                healthGradient.addColorStop(1, `rgba(220, ${Math.floor(20 * pulseIntensity)}, ${Math.floor(20 * pulseIntensity)}, 1)`);
+            }
+            
+            this.ctx.fillStyle = healthGradient;
+            this.roundRect(healthBarX, healthBarY, barWidth, healthBarHeight, cornerRadius);
+            
+            // Add highlight at the top for 3D effect
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            this.ctx.fillRect(healthBarX + 2, healthBarY + 2, barWidth - 4, 2);
+        }
         
         // Health text
         this.ctx.fillStyle = 'white';
         this.ctx.textAlign = 'center';
-        this.ctx.font = 'bold 14px Arial';
-        this.ctx.fillText(`Hearing: ${Math.round(healthPercent)}%`, healthBarX + healthBarWidth / 2, healthBarY + healthBarHeight / 2 + 5);
+        this.ctx.font = 'bold 12px Arial';
+        
+        // Add text shadow for better readability
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+        this.ctx.shadowBlur = 3;
+        this.ctx.shadowOffsetX = 1;
+        this.ctx.shadowOffsetY = 1;
+        
+        this.ctx.fillText(`Hearing: ${Math.round(healthPercent)}%`, healthBarX + healthBarWidth / 2, healthBarY + healthBarHeight / 2 + 4);
+        
+        // Reset shadow
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.shadowBlur = 0;
+        this.ctx.shadowOffsetX = 0;
+        this.ctx.shadowOffsetY = 0;
         
         this.ctx.restore();
     }
@@ -803,56 +1174,242 @@ class Game {
     }
 
     /**
-     * Draws trees along the side of the road
+     * Draws trees along the side of the road with more variety
      * @param {number} x - X position to start drawing trees
      * @param {number} y - Y position to start drawing trees
      * @param {number} height - Height of the tree area
      * @param {string} side - Which side of the road ('left' or 'right')
+     * @param {number} rowType - Type of tree row (0 for primary, 1 for secondary)
      */
-    drawTrees(x, y, height, side) {
-        const treeSpacing = 100; // Space between trees
-        const numTrees = Math.floor(height / treeSpacing);
+    drawTrees(x, y, height, side, rowType = 0) {
+        const treeSpacing = rowType === 0 ? 70 : 90; // Closer spacing for primary row
+        const numTrees = Math.floor(height / treeSpacing) + 2; // Add more trees
+        const treeTypes = ['pine', 'round', 'palm', 'banyan']; // Different tree types
         
         for (let i = 0; i < numTrees; i++) {
-            const treeY = y + (i * treeSpacing);
+            const treeY = y + (i * treeSpacing) + (Math.random() * 20 - 10); // Add variation to Y position
+            const treeOffset = side === 'left' ? 1 : -1; // Adjust for side
+            const treeX = x + (Math.random() * 15 - 7.5) * treeOffset; // Add variation to X position
+            
+            // Randomly select tree type
+            const treeType = treeTypes[Math.floor(Math.random() * treeTypes.length)];
+            
+            // Scale factor for size variation
+            const scale = 0.8 + Math.random() * 0.4;
+            
+            // Draw tree based on type
+            switch (treeType) {
+                case 'pine':
+                    this.drawPineTree(treeX, treeY, scale);
+                    break;
+                case 'round':
+                    this.drawRoundTree(treeX, treeY, scale);
+                    break;
+                case 'palm':
+                    this.drawPalmTree(treeX, treeY, scale);
+                    break;
+                case 'banyan':
+                    this.drawBanyanTree(treeX, treeY, scale);
+                    break;
+            }
+        }
+    }
+    
+    /**
+     * Draws a pine tree
+     * @param {number} x - X position
+     * @param {number} y - Y position
+     * @param {number} scale - Size scale factor
+     */
+    drawPineTree(x, y, scale) {
+        const trunkWidth = 8 * scale;
+        const trunkHeight = 30 * scale;
+        const leafWidth = 30 * scale;
+        const leafHeight = 50 * scale;
             
             // Draw tree trunk
-            this.ctx.fillStyle = '#4a2f1c';
-            this.ctx.fillRect(x - 5, treeY, 10, 40);
-            
-            // Draw tree top (triangle)
-            this.ctx.fillStyle = '#2d5a27';
+        this.ctx.fillStyle = '#5D4037';
+        this.ctx.fillRect(x - trunkWidth/2, y, trunkWidth, trunkHeight);
+        
+        // Draw tree leaves (triangle shapes, 3 layers)
+        this.ctx.fillStyle = '#2E7D32';
+        
+        // Bottom layer (largest)
             this.ctx.beginPath();
-            this.ctx.moveTo(x - 20, treeY);
-            this.ctx.lineTo(x + 20, treeY);
-            this.ctx.lineTo(x, treeY - 40);
+        this.ctx.moveTo(x - leafWidth, y);
+        this.ctx.lineTo(x + leafWidth, y);
+        this.ctx.lineTo(x, y - leafHeight * 0.6);
             this.ctx.closePath();
             this.ctx.fill();
             
-            // Add some random variation to tree positions
-            x += (Math.random() - 0.5) * 20;
-        }
-    }
-
-    /**
-     * Draws a subtle texture on the road
-     * @param {number} y - Y position to start drawing texture
-     * @param {number} height - Height of the road
-     */
-    drawRoadTexture(y, height) {
-        this.ctx.save();
-        this.ctx.globalAlpha = 0.1;
+        // Middle layer
+        this.ctx.beginPath();
+        this.ctx.moveTo(x - leafWidth * 0.8, y - leafHeight * 0.4);
+        this.ctx.lineTo(x + leafWidth * 0.8, y - leafHeight * 0.4);
+        this.ctx.lineTo(x, y - leafHeight * 0.9);
+        this.ctx.closePath();
+        this.ctx.fill();
         
-        for (let i = 0; i < height; i += 2) {
-            for (let j = 0; j < this.canvas.width; j += 2) {
-                if (Math.random() < 0.1) {
-                    this.ctx.fillStyle = '#ffffff';
-                    this.ctx.fillRect(j, y + i, 2, 2);
-                }
+        // Top layer (smallest)
+        this.ctx.beginPath();
+        this.ctx.moveTo(x - leafWidth * 0.6, y - leafHeight * 0.7);
+        this.ctx.lineTo(x + leafWidth * 0.6, y - leafHeight * 0.7);
+        this.ctx.lineTo(x, y - leafHeight);
+        this.ctx.closePath();
+        this.ctx.fill();
+    }
+    
+    /**
+     * Draws a round canopy tree
+     * @param {number} x - X position
+     * @param {number} y - Y position
+     * @param {number} scale - Size scale factor
+     */
+    drawRoundTree(x, y, scale) {
+        const trunkWidth = 8 * scale;
+        const trunkHeight = 35 * scale;
+        const canopyRadius = 25 * scale;
+        
+        // Draw tree trunk
+        this.ctx.fillStyle = '#5D4037';
+        this.ctx.fillRect(x - trunkWidth/2, y, trunkWidth, trunkHeight);
+        
+        // Draw tree canopy (circle)
+        this.ctx.fillStyle = '#388E3C';
+        this.ctx.beginPath();
+        this.ctx.arc(x, y - canopyRadius * 0.5, canopyRadius, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Add highlight for 3D effect
+        this.ctx.fillStyle = '#43A047';
+        this.ctx.beginPath();
+        this.ctx.arc(x + 5, y - canopyRadius * 0.6, canopyRadius * 0.7, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+    
+    /**
+     * Draws a palm tree (more tropical style) using pre-calculated data
+     * @param {number} x - X position
+     * @param {number} y - Y position
+     * @param {number} scale - Size scale factor
+     * @param {Array} palmLeafData - Pre-calculated palm leaf positions and angles
+     */
+    drawPalmTree(x, y, scale, palmLeafData) {
+        const trunkWidth = 6 * scale;
+        const trunkHeight = 50 * scale;
+        const leafLength = 30 * scale;
+        
+        // Draw curved trunk
+        this.ctx.strokeStyle = '#8D6E63';
+        this.ctx.lineWidth = trunkWidth;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y + trunkHeight);
+        this.ctx.bezierCurveTo(
+            x, y + trunkHeight * 0.7,
+            x + 10 * scale, y + trunkHeight * 0.3,
+            x + 5 * scale, y
+        );
+        this.ctx.stroke();
+        
+        // Draw palm leaves using pre-calculated data
+        this.ctx.fillStyle = '#66BB6A';
+        
+        if (palmLeafData) {
+            // Use pre-calculated leaf data
+            for (const leaf of palmLeafData) {
+                const leafX = x + 5 * scale + leaf.leafX;
+                const leafY = y + leaf.leafY;
+                
+                this.ctx.save();
+                this.ctx.translate(leafX, leafY);
+                this.ctx.rotate(leaf.angle);
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, 0);
+                this.ctx.bezierCurveTo(
+                    leafLength * 0.3, -5 * scale,
+                    leafLength * 0.7, -8 * scale,
+                    leafLength, 0
+                );
+                this.ctx.bezierCurveTo(
+                    leafLength * 0.7, 8 * scale,
+                    leafLength * 0.3, 5 * scale,
+                    0, 0
+                );
+                this.ctx.fill();
+                
+                this.ctx.restore();
+            }
+        } else {
+            // Fallback to fixed pattern for older tree objects without pre-calculated data
+            const numLeaves = 6;
+            for (let i = 0; i < numLeaves; i++) {
+                const angle = (i / numLeaves) * Math.PI * 2;
+                const leafX = x + 5 * scale + Math.cos(angle) * 5;
+                const leafY = y + Math.sin(angle) * 5;
+                
+                this.ctx.save();
+                this.ctx.translate(leafX, leafY);
+                this.ctx.rotate(angle);
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, 0);
+                this.ctx.bezierCurveTo(
+                    leafLength * 0.3, -5 * scale,
+                    leafLength * 0.7, -8 * scale,
+                    leafLength, 0
+                );
+                this.ctx.bezierCurveTo(
+                    leafLength * 0.7, 8 * scale,
+                    leafLength * 0.3, 5 * scale,
+                    0, 0
+                );
+                this.ctx.fill();
+                
+                this.ctx.restore();
             }
         }
+    }
+    
+    /**
+     * Draws a banyan style tree (inspired by South Asian trees)
+     * @param {number} x - X position
+     * @param {number} y - Y position
+     * @param {number} scale - Size scale factor
+     */
+    drawBanyanTree(x, y, scale) {
+        const trunkWidth = 12 * scale;
+        const trunkHeight = 30 * scale;
+        const canopyWidth = 50 * scale;
+        const canopyHeight = 40 * scale;
         
-        this.ctx.restore();
+        // Draw main trunk
+        this.ctx.fillStyle = '#5D4037';
+        this.ctx.fillRect(x - trunkWidth/2, y, trunkWidth, trunkHeight);
+        
+        // Draw aerial roots on sides
+        const numRoots = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < numRoots; i++) {
+            const rootOffset = (i / numRoots - 0.5) * trunkWidth * 2;
+            const rootX = x + rootOffset;
+            const rootY = y + trunkHeight * 0.4;
+            const rootHeight = trunkHeight * 0.6;
+            
+            this.ctx.fillStyle = '#6D4C41';
+            this.ctx.fillRect(rootX - 2 * scale, rootY, 4 * scale, rootHeight);
+        }
+        
+        // Draw wide, layered canopy
+        this.ctx.fillStyle = '#1B5E20';
+        this.ctx.beginPath();
+        this.ctx.ellipse(x, y - canopyHeight * 0.3, canopyWidth, canopyHeight * 0.5, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Draw second layer of canopy
+        this.ctx.fillStyle = '#2E7D32';
+        this.ctx.beginPath();
+        this.ctx.ellipse(x, y - canopyHeight * 0.6, canopyWidth * 0.8, canopyHeight * 0.4, 0, 0, Math.PI * 2);
+        this.ctx.fill();
     }
 
     /**
@@ -1052,6 +1609,85 @@ class Game {
         if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.crash) {
             assets.sounds.effects.crash.currentTime = 0;
             assets.sounds.effects.crash.play();
+        }
+    }
+
+    // Add helper method for drawing rounded rectangles if it doesn't exist
+    roundRect(x, y, width, height, radius) {
+        if (radius === 0) {
+            this.ctx.fillRect(x, y, width, height);
+            return;
+        }
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(x + radius, y);
+        this.ctx.lineTo(x + width - radius, y);
+        this.ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        this.ctx.lineTo(x + width, y + height - radius);
+        this.ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        this.ctx.lineTo(x + radius, y + height);
+        this.ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        this.ctx.lineTo(x, y + radius);
+        this.ctx.quadraticCurveTo(x, y, x + radius, y);
+        this.ctx.closePath();
+        this.ctx.fill();
+    }
+
+    /**
+     * Renders the stored buildings (to prevent flickering)
+     */
+    renderStoredBuildings() {
+        for (const building of this.buildings) {
+            this.drawSubcontinentalBuilding(
+                building.x, 
+                building.y, 
+                building.width, 
+                building.height, 
+                building.type, 
+                building.baseColor, 
+                building.trimColor
+            );
+        }
+    }
+    
+    /**
+     * Renders the stored trees (to prevent flickering)
+     */
+    renderStoredTrees() {
+        // Draw left side trees
+        for (const tree of this.trees.left) {
+            switch (tree.type) {
+                case 'pine':
+                    this.drawPineTree(tree.x, tree.y, tree.scale);
+                    break;
+                case 'round':
+                    this.drawRoundTree(tree.x, tree.y, tree.scale);
+                    break;
+                case 'palm':
+                    this.drawPalmTree(tree.x, tree.y, tree.scale, tree.palmLeafData);
+                    break;
+                case 'banyan':
+                    this.drawBanyanTree(tree.x, tree.y, tree.scale);
+                    break;
+            }
+        }
+        
+        // Draw right side trees
+        for (const tree of this.trees.right) {
+            switch (tree.type) {
+                case 'pine':
+                    this.drawPineTree(tree.x, tree.y, tree.scale);
+                    break;
+                case 'round':
+                    this.drawRoundTree(tree.x, tree.y, tree.scale);
+                    break;
+                case 'palm':
+                    this.drawPalmTree(tree.x, tree.y, tree.scale, tree.palmLeafData);
+                    break;
+                case 'banyan':
+                    this.drawBanyanTree(tree.x, tree.y, tree.scale);
+                    break;
+            }
         }
     }
 }

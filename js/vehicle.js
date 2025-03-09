@@ -98,14 +98,16 @@ class Vehicle {
         // If we couldn't find a valid vehicle after multiple attempts, use console error
         // This should never happen in a properly set up game
         if (!validVehicleFound) {
-            console.error('Failed to find valid vehicle assets after multiple attempts');
-            this.type = 'car'; // Default to car
-            this.spriteIndex = 0; // Default sprite index
+            console.error("Failed to find valid vehicle type and sprite after multiple attempts");
+            
+            // Default to a known type and direction
+            this.type = 'car';
+            this.direction = 'right';
+            this.spriteIndex = 0;
         }
         
-        // Set size based on type
-        this.width = this.type === 'car' ? 40 : this.type === 'truck' ? 50 : 60;
-        this.height = 25;
+        // Pre-calculate and store vehicle dimensions to avoid repeated calculations
+        this.calculateVehicleDimensions();
         
         // Define lanes
         this.totalLanes = 6; // Total number of lanes on the road (including emergency lanes)
@@ -155,8 +157,8 @@ class Vehicle {
         this.laneChangeProgress = 0;
         this.laneChangeSpeed = 1.0; // Time to complete lane change in seconds
         
-        // Honking properties
-        this.isHonking = Math.random() < 0.3; // 30% chance to be honking
+        // Honking properties - reduced chance of honking by 15%
+        this.isHonking = Math.random() < 0.255; // Reduced from 30% to 25.5% chance (15% reduction)
         this.honkInterval = 1.0; // seconds between honk sounds while honking
         this.lastHonkTime = 0; // track last honk time
         this.honkAnimationTimer = 0; // timer for honk animation
@@ -174,6 +176,66 @@ class Vehicle {
         this.honkDuration = Math.random() * 2 + 1; // Random duration between 1-3 seconds
         this.honkTimer = 0;
         this.honkCooldown = 0;
+    }
+    
+    /**
+     * Calculate and store vehicle dimensions based on sprite
+     * This prevents dimensions from being recalculated every frame
+     */
+    calculateVehicleDimensions() {
+        // Use a fixed height for all vehicles to fit properly in lanes
+        const standardHeight = 30;
+        this.height = standardHeight;
+        
+        // Get sprite to determine aspect ratio
+        const spriteArray = assets.visuals.vehicles[`${this.type}_sprites`][this.direction];
+        
+        if (spriteArray && spriteArray.length > 0 && this.spriteIndex < spriteArray.length) {
+            const sprite = spriteArray[this.spriteIndex];
+            
+            if (sprite) {
+                // Calculate width based on the sprite's aspect ratio and our fixed height
+                const aspectRatio = sprite.width / sprite.height;
+                this.width = standardHeight * aspectRatio;
+                
+                // Set reasonable minimum and maximum widths
+                if (this.width < 40) this.width = 40; // Minimum width
+                if (this.width > 120) this.width = 120; // Maximum width
+            } else {
+                // Fallback width if sprite is unavailable
+                this.setDefaultWidth();
+            }
+        } else {
+            // Fallback width if sprite array is unavailable
+            this.setDefaultWidth();
+        }
+        
+        // Store half dimensions for more efficient collision detection
+        this.halfWidth = this.width / 2;
+        this.halfHeight = this.height / 2;
+    }
+    
+    /**
+     * Sets default width based on vehicle type
+     */
+    setDefaultWidth() {
+        // Default widths if sprite information is unavailable
+        switch (this.type) {
+            case 'car':
+                this.width = 60;
+                break;
+            case 'truck':
+                this.width = 80;
+                break;
+            case 'bus':
+                this.width = 100;
+                break;
+            case 'emergency':
+                this.width = 70;
+                break;
+            default:
+                this.width = 60;
+        }
     }
     
     /**
@@ -364,14 +426,17 @@ class Vehicle {
      * Slows the vehicle down to a random percentage between 5% and 30% of its original speed
      */
     slowDown() {
+        if (this.isSlowingDown) return; // Already slowing down
+        
         this.isSlowingDown = true;
+        
         // Generate a random percentage between 5% and 30%
         const randomSlowdownPercentage = (Math.random() * 25 + 5) / 100; // 0.05 to 0.30
         // Set target speed to the random percentage of original speed (keeping the sign)
         this.targetSpeed = this.originalSpeed * randomSlowdownPercentage;
         
-        // 50% chance to honk when slowing down
-        if (Math.random() < 0.5 && !this.isHonking && !this.hitByPoop && !this.hasCrashed && this.honkCooldown <= 0) {
+        // Reduced chance to honk when slowing down by 15%
+        if (Math.random() < 0.425 && !this.isHonking && !this.hitByPoop && !this.hasCrashed && this.honkCooldown <= 0) { // Reduced from 50% to 42.5%
             this.playHonkSound();
             this.honkTimer = 0; // Reset honk timer
         }
@@ -738,10 +803,10 @@ class Vehicle {
             
             // Simple bounding box collision detection
             const collision = 
-                this.x - this.width/2 < otherVehicle.x + otherVehicle.width/2 &&
-                this.x + this.width/2 > otherVehicle.x - otherVehicle.width/2 &&
-                this.y - this.height/2 < otherVehicle.y + otherVehicle.height/2 &&
-                this.y + this.height/2 > otherVehicle.y - otherVehicle.height/2;
+                this.x - this.halfWidth < otherVehicle.x + otherVehicle.halfWidth &&
+                this.x + this.halfWidth > otherVehicle.x - otherVehicle.halfWidth &&
+                this.y - this.halfHeight < otherVehicle.y + otherVehicle.halfHeight &&
+                this.y + this.halfHeight > otherVehicle.y - otherVehicle.halfHeight;
                 
             if (collision) {
                 // If moving in opposite directions, check speeds
@@ -871,22 +936,33 @@ class Vehicle {
             const sprite = spriteArray[this.spriteIndex];
             
             if (sprite) {
-                // Draw the vehicle with optional honking animation
+                // Calculate consistent bounce for honk animation
+                let bounceY = 0;
                 if (this.honkAnimationTimer > 0) {
-                    // When honking, make the vehicle "bounce" a little
-                    const bounceY = Math.sin(this.honkAnimationTimer * Math.PI * 10) * 2;
-                    ctx.drawImage(sprite, this.x - this.width/2, this.y - this.height/2 + bounceY, this.width, this.height);
-                } else {
-                    ctx.drawImage(sprite, this.x - this.width/2, this.y - this.height/2, this.width, this.height);
+                    // Use a deterministic calculation based on a known value
+                    const bounceFrequency = 10; // Hz
+                    const bounceAmplitude = 2; // pixels
+                    const phase = this.honkAnimationTimer * Math.PI * bounceFrequency;
+                    bounceY = Math.sin(phase) * bounceAmplitude;
                 }
+                
+                // Draw the sprite at its position
+                ctx.drawImage(
+                    sprite, 
+                    this.x - this.halfWidth, 
+                    this.y - this.halfHeight + bounceY, 
+                    this.width, 
+                    this.height
+                );
+                
                 return true; // Successfully drew sprite
             }
         }
         
         // If we've reached this point, we don't have a valid sprite to draw
-        // Log the issue for debugging but don't draw anything
-        console.warn(`Missing sprite for vehicle type: ${this.type}, direction: ${this.direction}, index: ${this.spriteIndex}`);
-        return false;
+        // Fall back to basic shape drawing
+        this.drawFallback(ctx);
+        return true;
     }
     
     /**
@@ -1103,7 +1179,8 @@ class Vehicle {
         
         // Calculate wave size multiplier based on the effective wave (capped at wave 3)
         // Start with 1.0 at wave 1, and add 0.2 for each wave (20% increase per wave)
-        let waveMultiplier = 1.0 + (effectiveWave - 1) * 0.2;
+        // Reduced by 15%
+        let waveMultiplier = (1.0 + (effectiveWave - 1) * 0.2) * 0.85; // 15% reduction in wave size
         
         // Special case: Emergency vehicles have 55% larger sound waves
         if (this.type === 'emergency') {
@@ -1142,7 +1219,8 @@ class Vehicle {
         this.soundWaves = this.soundWaves.filter(wave => wave.opacity > 0);
         
         // Add new wave when needed - emergency vehicles produce waves more frequently
-        const newWaveChance = this.type === 'emergency' ? 0.15 : 0.1;
+        // Reduce wave generation frequency by 15%
+        const newWaveChance = this.type === 'emergency' ? 0.1275 : 0.085; // Reduced from 0.15/0.1 by 15%
         if (Math.random() < newWaveChance && this.soundWaves.length < 5) {
             this.soundWaves.push({
                 radius: 5,

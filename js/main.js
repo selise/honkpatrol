@@ -56,7 +56,8 @@ function handleKeyDown(event) {
             event.preventDefault();
             break;
         case ' ':
-            game.bird.drop();
+            // Use the game's handleSpacebar method to handle both dropping and restarting
+            game.handleSpacebar();
             event.preventDefault();
             break;
         case 'p':

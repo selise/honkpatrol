@@ -10,6 +10,9 @@ const assets = {
         droppings: null, // Will be created programmatically
         drops: {}, // New collection for drop assets
         food: {}, // Will store food item sprites
+        game: {
+            hearing_health: {} // For different hearing health levels
+        },
         vehicles: {
             car_sprites: { left: [], right: [] },
             bus_sprites: { left: [], right: [] },
@@ -135,6 +138,26 @@ async function preloadAssets() {
     
     // Create dropping sprite programmatically as a fallback
     assets.visuals.droppings = createDroppingSprite();
+    
+    // Load game UI elements
+    loadPromises.push(
+        loadImage('assets/visuals/game/bird_ears.png')
+            .then(img => assets.visuals.game.bird_ears = img)
+            .catch(err => console.warn('Failed to load bird_ears.png', err))
+    );
+    
+    // Load hearing health visuals (different ear states based on health percentage)
+    const hearingHealthLevels = [10, 20, 30, 40, 50, 60, 70, 80, 100];
+    hearingHealthLevels.forEach(level => {
+        loadPromises.push(
+            loadImage(`assets/visuals/game/hearing health/${level}.png`)
+                .then(img => {
+                    assets.visuals.game.hearing_health[level] = img;
+                    console.log(`Loaded hearing health image for ${level}%`);
+                })
+                .catch(err => console.warn(`Failed to load hearing health image for ${level}%`, err))
+        );
+    });
     
     // Load food sprites
     const foodItems = [

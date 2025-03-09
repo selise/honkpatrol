@@ -24,6 +24,9 @@ class Fire {
         this.animationTimer = 0;
         this.animationSpeed = 0.2; // seconds per frame
         
+        // Pre-calculate animation frames to prevent flickering
+        this.frameSequence = this.generateFrameSequence();
+        
         // Verify fire sprites are loaded
         const fireSprites = assets.visuals.vehicles.fire_sprites;
         if (fireSprites && fireSprites.length > 0) {
@@ -41,22 +44,86 @@ class Fire {
     }
     
     /**
+     * Generate a deterministic sequence of animation frames
+     * @returns {Array} Array of frame indices
+     */
+    generateFrameSequence() {
+        const fireSprites = assets.visuals.vehicles.fire_sprites;
+        const frameCount = fireSprites && fireSprites.length > 0 ? fireSprites.length : 4;
+        const totalFrames = Math.ceil(this.duration / this.animationSpeed);
+        const sequence = [];
+        
+        for (let i = 0; i < totalFrames; i++) {
+            // Use a deterministic pattern for frame selection
+            // This prevents random flickering that would happen if frames were selected randomly
+            sequence.push(i % frameCount);
+        }
+        
+        return sequence;
+    }
+    
+    /**
      * Initialize particles for the fire effect
      */
     initParticles() {
         const particleCount = 15;
+        const maxLifetime = this.duration * 0.7;
         
         for (let i = 0; i < particleCount; i++) {
+            // Pre-calculate all particle positions and properties for the entire lifetime
+            // This prevents random flickering from particles being regenerated
+            const baseX = Math.random() * this.width - this.width / 2;
+            const baseY = Math.random() * this.height / 2 - this.height / 4;
+            const size = Math.random() * 10 + 5;
+            const speedX = (Math.random() - 0.5) * 10;
+            const speedY = -Math.random() * 20 - 10;
+            const lifetime = Math.random() * maxLifetime;
+            const startTime = Math.random() * (this.duration - lifetime);
+            
             this.particles.push({
-                x: Math.random() * this.width - this.width / 2,
-                y: Math.random() * this.height / 2 - this.height / 4,
-                size: Math.random() * 10 + 5,
-                speedX: (Math.random() - 0.5) * 10,
-                speedY: -Math.random() * 20 - 10,
-                life: Math.random() * this.duration * 0.7,
-                opacity: Math.random() * 0.5 + 0.5
+                x: baseX,
+                y: baseY,
+                size: size,
+                speedX: speedX,
+                speedY: speedY,
+                lifetime: lifetime,
+                startTime: startTime,
+                initialOpacity: Math.random() * 0.5 + 0.5,
+                // Pre-calculated trajectory
+                positions: this.calculateParticleTrajectory(baseX, baseY, speedX, speedY, lifetime)
             });
         }
+    }
+    
+    /**
+     * Pre-calculate a particle's entire trajectory
+     * @param {number} startX - Starting X position
+     * @param {number} startY - Starting Y position
+     * @param {number} speedX - X velocity
+     * @param {number} speedY - Y velocity
+     * @param {number} lifetime - Particle lifetime
+     * @returns {Array} Array of positions
+     */
+    calculateParticleTrajectory(startX, startY, speedX, speedY, lifetime) {
+        const positions = [];
+        const steps = Math.ceil(lifetime / 0.05); // Calculate position every 50ms
+        
+        let x = startX;
+        let y = startY;
+        let currentSpeedY = speedY;
+        
+        for (let i = 0; i < steps; i++) {
+            // Update position with slight acceleration for more natural movement
+            x += speedX * 0.05;
+            y += currentSpeedY * 0.05;
+            
+            // Add slight upward acceleration (simulates hot air rising)
+            currentSpeedY += 2 * 0.05;
+            
+            positions.push({x, y});
+        }
+        
+        return positions;
     }
     
     /**
@@ -124,47 +191,19 @@ class Fire {
         this.animationTimer += deltaTime;
         if (this.animationTimer >= this.animationSpeed) {
             this.animationTimer = 0;
-            // Get number of fire frames
-            const fireSprites = assets.visuals.vehicles.fire_sprites;
-            const frameCount = fireSprites && fireSprites.length > 0 ? fireSprites.length : 4;
-            this.animationFrame = (this.animationFrame + 1) % frameCount;
-        }
-        
-        // Update particles
-        this.updateParticles(deltaTime);
-        
-        return true;
-    }
-    
-    /**
-     * Updates particle positions and properties
-     * @param {number} deltaTime - Time elapsed since last update in seconds
-     */
-    updateParticles(deltaTime) {
-        for (let i = 0; i < this.particles.length; i++) {
-            const particle = this.particles[i];
             
-            // Update position
-            particle.x += particle.speedX * deltaTime;
-            particle.y += particle.speedY * deltaTime;
-            
-            // Update life
-            particle.life -= deltaTime;
-            
-            // Fade out based on life
-            particle.opacity = Math.max(0, particle.life / (this.duration * 0.7));
-            
-            // Reset dead particles
-            if (particle.life <= 0) {
-                particle.x = Math.random() * this.width - this.width / 2;
-                particle.y = Math.random() * this.height / 2 - this.height / 4;
-                particle.size = Math.random() * 10 + 5;
-                particle.speedX = (Math.random() - 0.5) * 10;
-                particle.speedY = -Math.random() * 20 - 10;
-                particle.life = Math.random() * this.duration * 0.7 * (1 - this.timer / this.duration);
-                particle.opacity = Math.random() * 0.5 + 0.5;
+            // Use pre-calculated frame sequence
+            const frameIndex = Math.floor(this.timer / this.animationSpeed);
+            if (frameIndex < this.frameSequence.length) {
+                this.animationFrame = this.frameSequence[frameIndex];
+            } else {
+                // Fallback to looping animation if we exceed the pre-calculated sequence
+                const frameCount = this.frameSequence.length;
+                this.animationFrame = frameIndex % frameCount;
             }
         }
+        
+        return true;
     }
     
     /**
@@ -197,11 +236,6 @@ class Fire {
             const fireSprite = fireSprites[frameIndex];
             
             if (fireSprite) {
-                // Print debug info on first frame
-                if (this.timer < 0.1 && frameIndex === 0) {
-                    console.log(`Drawing fire with sprite from /assets/visuals/vehicles/fire_sprites`);
-                }
-                
                 // Add a glow effect for more intensity
                 ctx.shadowColor = 'rgba(255, 120, 0, 0.6)';
                 ctx.shadowBlur = 20;
@@ -300,42 +334,45 @@ class Fire {
     }
     
     /**
-     * Draws the particles for the fire effect
+     * Draws the particles for fire effect
      * @param {CanvasRenderingContext2D} ctx - The canvas rendering context
      */
     drawParticles(ctx) {
-        // Reset shadow for particles
-        ctx.shadowBlur = 0;
-        
-        // Draw smoke/ember particles
         for (const particle of this.particles) {
-            // Determine if this is a smoke particle or ember based on speed
-            const isEmber = Math.abs(particle.speedX) > 5;
-            
-            if (isEmber) {
-                // Draw ember (small bright particles)
-                ctx.fillStyle = `rgba(255, ${Math.floor(Math.random() * 100 + 100)}, 0, ${particle.opacity})`;
-                ctx.beginPath();
-                ctx.arc(
-                    this.x + particle.x,
-                    this.y + particle.y,
-                    particle.size / 3,
-                    0,
-                    Math.PI * 2
+            // Only draw particles during their lifetime
+            if (this.timer >= particle.startTime && 
+                this.timer <= particle.startTime + particle.lifetime) {
+                
+                // Calculate progress through particle lifetime
+                const progress = (this.timer - particle.startTime) / particle.lifetime;
+                
+                // Use pre-calculated position
+                const positionIndex = Math.floor(progress * (particle.positions.length - 1));
+                const position = particle.positions[positionIndex];
+                
+                // Fade out as particle ages
+                const opacity = particle.initialOpacity * (1 - progress);
+                
+                // Draw particle
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                
+                // Create gradient for particle
+                const gradient = ctx.createRadialGradient(
+                    this.x + position.x, this.y + position.y, 0,
+                    this.x + position.x, this.y + position.y, particle.size
                 );
-                ctx.fill();
-            } else {
-                // Draw smoke (larger gray particles)
-                ctx.fillStyle = `rgba(100, 100, 100, ${particle.opacity * 0.7})`;
+                
+                gradient.addColorStop(0, 'rgba(255, 255, 200, 0.8)');
+                gradient.addColorStop(0.5, 'rgba(255, 120, 0, 0.6)');
+                gradient.addColorStop(1, 'rgba(255, 60, 0, 0)');
+                
+                ctx.fillStyle = gradient;
                 ctx.beginPath();
-                ctx.arc(
-                    this.x + particle.x,
-                    this.y + particle.y,
-                    particle.size,
-                    0,
-                    Math.PI * 2
-                );
+                ctx.arc(this.x + position.x, this.y + position.y, particle.size, 0, Math.PI * 2);
                 ctx.fill();
+                
+                ctx.restore();
             }
         }
     }

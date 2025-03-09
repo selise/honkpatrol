@@ -46,6 +46,11 @@ class Bird {
         
         // Dropping cooldown timer
         this.droppingCooldownTimer = 0;
+        
+        // Health system
+        this.maxHealth = 100;
+        this.health = this.maxHealth;
+        this.isDead = false;
     }
 
     /**
@@ -54,12 +59,12 @@ class Bird {
     updatePowerUpProperties() {
         // Define power-up levels
         const powerUpLevels = [
-            { poopSize: 10, poopCooldown: 1.0, splashRadius: 0, poopType: 'single', poopSpeed: 200, poopCount: 1 },   // Level 0
-            { poopSize: 15, poopCooldown: 0.8, splashRadius: 20, poopType: 'single', poopSpeed: 250, poopCount: 1 },  // Level 1
-            { poopSize: 25, poopCooldown: 0.6, splashRadius: 40, poopType: 'single', poopSpeed: 300, poopCount: 1 },  // Level 2
-            { poopSize: 20, poopCooldown: 0.5, splashRadius: 60, poopType: 'multi', poopSpeed: 350, poopCount: 3 },   // Level 3
-            { poopSize: 15, poopCooldown: 0.4, splashRadius: 80, poopType: 'multi', poopSpeed: 400, poopCount: 5 },   // Level 4
-            { poopSize: 10, poopCooldown: 0.3, splashRadius: 100, poopType: 'laser', poopSpeed: 600, poopCount: 10 }  // Level 5
+            { poopSize: 10, poopCooldown: 1.0, splashRadius: 0 },   // Level 0
+            { poopSize: 15, poopCooldown: 0.8, splashRadius: 20 },  // Level 1
+            { poopSize: 20, poopCooldown: 0.6, splashRadius: 40 },  // Level 2
+            { poopSize: 25, poopCooldown: 0.5, splashRadius: 60 },  // Level 3
+            { poopSize: 30, poopCooldown: 0.4, splashRadius: 80 },  // Level 4
+            { poopSize: 35, poopCooldown: 0.3, splashRadius: 100 }  // Level 5
         ];
         
         // Get properties for current level
@@ -69,9 +74,6 @@ class Bird {
         this.poopSize = levelProps.poopSize;
         this.poopCooldown = levelProps.poopCooldown;
         this.splashRadius = levelProps.splashRadius;
-        this.poopType = levelProps.poopType;
-        this.poopSpeed = levelProps.poopSpeed;
-        this.poopCount = levelProps.poopCount;
     }
 
     /**
@@ -83,6 +85,10 @@ class Bird {
         
         // Increase belly points
         this.bellyPoints += food.bellyPoints;
+        
+        // Heal 10% of max health when eating food
+        const healAmount = this.maxHealth * 0.1; // 10% of max health
+        this.heal(healAmount);
         
         // Calculate new power-up level (e.g., level 1 at 5 points, level 2 at 10, etc.)
         const newLevel = Math.min(Math.floor(this.bellyPoints / 5), this.maxPowerUpLevel);
@@ -165,44 +171,14 @@ class Bird {
             return null; // Only one dropping at a time or on cooldown
         }
         
-        // Create different types of droppings based on power level
-        if (this.poopType === 'single') {
-            // Single dropping (levels 0-2)
-            this.activeDropping = this.createSingleDropping();
-        } else if (this.poopType === 'multi') {
-            // Multiple small droppings (levels 3-4)
-            this.activeDropping = this.createMultiDropping();
-        } else if (this.poopType === 'laser') {
-            // Laser-like rapid droppings (level 5)
-            this.activeDropping = this.createLaserDropping();
-        }
-        
-        // Start cooldown
-        this.droppingCooldownTimer = this.poopCooldown;
-        
-        // Play sound effect
-        if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.poop) {
-            assets.sounds.effects.poop.currentTime = 0;
-            assets.sounds.effects.poop.play();
-        }
-        
-        return this.activeDropping;
-    }
-    
-    /**
-     * Creates a single dropping (for levels 0-2)
-     * @returns {Object} The dropping object
-     * @private
-     */
-    createSingleDropping() {
-        return {
+        // Create dropping at bird's center with current power-up properties
+        this.activeDropping = {
             x: this.x + this.width / 2,
             y: this.y + this.height / 2,
             width: this.poopSize,
             height: this.poopSize,
-            speed: this.poopSpeed,
+            speed: 300, // pixels per second
             splashRadius: this.splashRadius,
-            type: 'single',
             draw: function(ctx) {
                 // Use the poop sprite if available, fallback to drawing a circle
                 if (assets && assets.visuals && assets.visuals.drops && assets.visuals.drops.poop) {
@@ -222,193 +198,17 @@ class Bird {
                 }
             }
         };
-    }
-    
-    /**
-     * Creates multiple droppings (for levels 3-4)
-     * @returns {Object} The container for multiple droppings
-     * @private
-     */
-    createMultiDropping() {
-        const poops = [];
-        const spacing = 15; // spacing between droppings
         
-        for (let i = 0; i < this.poopCount; i++) {
-            // Create multiple smaller poops in a triangle formation
-            poops.push({
-                x: this.x + this.width / 2 + (i - Math.floor(this.poopCount / 2)) * spacing,
-                y: this.y + this.height / 2,
-                width: this.poopSize,
-                height: this.poopSize,
-                speed: this.poopSpeed,
-                splashRadius: this.splashRadius / 2,
-                active: true // Track whether each poop is still active
-            });
+        // Start cooldown
+        this.droppingCooldownTimer = this.poopCooldown;
+        
+        // Play sound effect
+        if (assets && assets.sounds && assets.sounds.effects && assets.sounds.effects.poop) {
+            assets.sounds.effects.poop.currentTime = 0;
+            assets.sounds.effects.poop.play();
         }
         
-        return {
-            x: this.x + this.width / 2,
-            y: this.y + this.height / 2,
-            width: this.poopSize * 3,
-            height: this.poopSize * 3,
-            speed: this.poopSpeed,
-            splashRadius: this.splashRadius,
-            poops: poops,
-            type: 'multi',
-            
-            // Update all contained poops
-            update: function(deltaTime) {
-                let anyStillOnScreen = false;
-                
-                for (const poop of this.poops) {
-                    if (!poop.active) continue; // Skip inactive poops
-                    
-                    // Update position
-                    poop.y += this.speed * deltaTime;
-                    
-                    // Add horizontal spread as they fall
-                    const spreadFactor = 0.3;
-                    if (poop.x < this.x) {
-                        poop.x -= spreadFactor * this.speed * deltaTime;
-                    } else if (poop.x > this.x) {
-                        poop.x += spreadFactor * this.speed * deltaTime;
-                    }
-                    
-                    // Check if this poop has gone off-screen
-                    if (poop.y > 800) { // assuming 800 is the canvas height
-                        poop.active = false;
-                    } else {
-                        anyStillOnScreen = true;
-                    }
-                }
-                
-                // Return true if any poop is still on screen, false if all have gone off-screen
-                return anyStillOnScreen;
-            },
-            
-            // Draw all contained poops
-            draw: function(ctx) {
-                for (const poop of this.poops) {
-                    if (!poop.active) continue; // Skip inactive poops
-                    
-                    if (assets && assets.visuals && assets.visuals.drops && assets.visuals.drops.poop) {
-                        ctx.drawImage(
-                            assets.visuals.drops.poop,
-                            poop.x - poop.width / 2,
-                            poop.y - poop.height / 2,
-                            poop.width,
-                            poop.height
-                        );
-                    } else {
-                        // Fallback to circles
-                        ctx.fillStyle = '#8B4513';
-                        ctx.beginPath();
-                        ctx.arc(poop.x, poop.y, poop.width / 2, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    
-                    // Draw splash radius for each poop
-                    if (poop.splashRadius > 0) {
-                        ctx.strokeStyle = 'rgba(139, 69, 19, 0.3)';
-                        ctx.beginPath();
-                        ctx.arc(poop.x, poop.y, poop.splashRadius, 0, Math.PI * 2);
-                        ctx.stroke();
-                    }
-                }
-            },
-            
-            // Get all active sub-poops for collision detection
-            getPoops: function() {
-                return this.poops.filter(poop => poop.active);
-            }
-        };
-    }
-    
-    /**
-     * Creates a laser-like dropping (for level 5)
-     * @returns {Object} The container for laser droppings
-     * @private
-     */
-    createLaserDropping() {
-        const poops = [];
-        const laserLength = 400; // Length of the laser
-        
-        // Create many small poops in a straight line
-        for (let i = 0; i < this.poopCount; i++) {
-            poops.push({
-                x: this.x + this.width / 2,
-                y: this.y + this.height / 2 + (i * (laserLength / this.poopCount)),
-                width: this.poopSize,
-                height: this.poopSize,
-                speed: 0, // These don't move - they appear instantly
-                splashRadius: this.splashRadius / 3
-            });
-        }
-        
-        return {
-            x: this.x + this.width / 2,
-            y: this.y + this.height / 2,
-            width: this.poopSize * 2, // Make laser thicker
-            height: laserLength,
-            speed: this.poopSpeed,
-            splashRadius: this.splashRadius,
-            poops: poops,
-            type: 'laser',
-            lifetime: 0.6, // Increase lifetime to make it more visible (from 0.3 to 0.6 seconds)
-            
-            // Laser doesn't move but has a lifetime
-            update: function(deltaTime) {
-                this.lifetime -= deltaTime;
-                return this.lifetime > 0;
-            },
-            
-            // Draw laser effect
-            draw: function(ctx) {
-                // Draw path for laser with glow effect
-                ctx.save();
-                
-                // Draw wider glow
-                ctx.strokeStyle = 'rgba(139, 69, 19, 0.3)';
-                ctx.lineWidth = this.width * 2;
-                ctx.beginPath();
-                ctx.moveTo(this.x, this.y);
-                ctx.lineTo(this.x, this.y + laserLength);
-                ctx.stroke();
-                
-                // Draw core laser
-                ctx.strokeStyle = 'rgba(139, 69, 19, 0.8)';
-                ctx.lineWidth = this.width;
-                ctx.beginPath();
-                ctx.moveTo(this.x, this.y);
-                ctx.lineTo(this.x, this.y + laserLength);
-                ctx.stroke();
-                
-                ctx.restore();
-                
-                // Draw individual poops along the laser
-                for (const poop of this.poops) {
-                    if (assets && assets.visuals && assets.visuals.drops && assets.visuals.drops.poop) {
-                        ctx.drawImage(
-                            assets.visuals.drops.poop,
-                            poop.x - poop.width / 2,
-                            poop.y - poop.height / 2,
-                            poop.width,
-                            poop.height
-                        );
-                    } else {
-                        ctx.fillStyle = '#8B4513';
-                        ctx.beginPath();
-                        ctx.arc(poop.x, poop.y, poop.width / 2, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                }
-            },
-            
-            // Get all sub-poops for collision detection
-            getPoops: function() {
-                return this.poops;
-            }
-        };
+        return this.activeDropping;
     }
 
     /**
@@ -449,21 +249,11 @@ class Bird {
         
         // Update active dropping
         if (this.activeDropping) {
-            // Handle different dropping types
-            if (this.activeDropping.type === 'single') {
-                // Standard single dropping update
-                this.activeDropping.y += this.activeDropping.speed * deltaTime;
-                
-                // Remove dropping if it goes off screen
-                if (this.activeDropping.y > this.canvasHeight) {
-                    this.activeDropping = null;
-                }
-            } else {
-                // For multi and laser types, use their custom update
-                const stillActive = this.activeDropping.update(deltaTime);
-                if (!stillActive) {
-                    this.activeDropping = null;
-                }
+            this.activeDropping.y += this.activeDropping.speed * deltaTime;
+            
+            // Remove dropping if it goes off screen
+            if (this.activeDropping.y > this.canvasHeight) {
+                this.activeDropping = null;
             }
         }
         
@@ -522,7 +312,30 @@ class Bird {
         
         // Draw dropping if active
         if (this.activeDropping) {
-            this.activeDropping.draw(ctx);
+            ctx.fillStyle = '#8B4513'; // Brown color
+            ctx.beginPath();
+            ctx.arc(
+                this.activeDropping.x, 
+                this.activeDropping.y, 
+                this.activeDropping.width / 2, // Use size from power-up level
+                0, 
+                Math.PI * 2
+            );
+            ctx.fill();
+            
+            // Draw splash radius indicator if applicable
+            if (this.activeDropping.splashRadius > 0) {
+                ctx.strokeStyle = 'rgba(139, 69, 19, 0.3)'; // Transparent brown
+                ctx.beginPath();
+                ctx.arc(
+                    this.activeDropping.x,
+                    this.activeDropping.y,
+                    this.activeDropping.splashRadius,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.stroke();
+            }
         }
         
         // Draw power-up level indicator
@@ -565,6 +378,44 @@ class Bird {
         this.activeDropping = null;
     }
     
+    /**
+     * Damages the bird's health
+     * @param {number} amount - Amount of health to reduce
+     */
+    damage(amount) {
+        this.health = Math.max(0, this.health - amount);
+        
+        // Check if bird has died
+        if (this.health <= 0 && !this.isDead) {
+            this.isDead = true;
+        }
+    }
+    
+    /**
+     * Called when a honk is experienced by the bird
+     */
+    experienceHonk() {
+        // Reduce health by 0.2% when experiencing a honk (reduced from 1%)
+        // This makes the health decrease 5 times slower
+        this.damage(0.2);
+    }
+    
+    /**
+     * Heals the bird
+     * @param {number} amount - Amount of health to recover
+     */
+    heal(amount) {
+        this.health = Math.min(this.maxHealth, this.health + amount);
+    }
+    
+    /**
+     * Gets the current health as a percentage
+     * @returns {number} Health percentage (0-100)
+     */
+    getHealthPercentage() {
+        return (this.health / this.maxHealth) * 100;
+    }
+
     /**
      * Gets the current power-up level and properties
      * @returns {Object} Power-up state
